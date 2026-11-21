@@ -1,100 +1,191 @@
-# Kayock Writer v1.1.0
+# Kayock Writer
 
-A standalone, browser-based creative writing suite for the LAN — extracted and
-upgraded from [FOXAI](https://github.com/kayock/FOXAI_) (commit `b510e5c38c0a1fa41f61b6c65e74ce1812f1ecdb`).
+**A private-first creative writing studio for your own AI models.**
 
-One app, one dashboard, one left-hand navigation tree:
+[![Tests](https://github.com/kayock/Kayock-Writer/actions/workflows/tests.yml/badge.svg)](https://github.com/kayock/Kayock-Writer/actions/workflows/tests.yml)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Zero third-party Python dependencies](https://img.shields.io/badge/Python_dependencies-0-555)
+![Version 1.1.0](https://img.shields.io/badge/Release-v1.1.0-7953CF)
 
-| Forge | What it does |
-|---|---|
-| **Poetry Forge** | Poem creator, poem polisher, Selected Lines & Stanza Workshop (three verified replacement passages), poem archive with version groups, voice-recording folders, legacy/dedication flags |
-| **Short Story Forge** | Short-story creator and polisher (story-specific focus presets, substantive-change verification), story drafts merged into the same archive |
-| **Novel Forge** | Universes: premise, characters, locations, artifacts, timeline, mysteries, scenes, notes — with structured card builders, JSON + Markdown persistence, Story Bible export (JSON/MD/TXT) |
-| **Story Forge** | Approval-gated story projects: manifest (`kayock.writer.project.v1`), chapter cards + continuity handoffs, chapter editor with diff verification and backups, versioned drafts, prose manuscript workspace |
-| **The Weaver** | Weave 2–4 sources into one new poem, short story, clean prose, or Twine-ready passages — with planner source-map, contamination rejection, and copy-similarity warnings |
-| **My Writing** | Every saved poem, story, and version — searchable, grouped, read-only |
+Kayock Writer brings **Poetry Forge, Short Story Forge, Novel Forge, Story Forge, and The Weaver** together in one responsive, browser-accessible workspace. Draft with a literary voice, revise selected passages, organize entire fictional universes, and save your work on storage you control.
 
-All ten literary voice profiles are preserved:
+It is a **standalone extraction of the writing tools from [FOXAI](https://github.com/kayock/FOXAI_)**, not a FOXAI plugin. Run it on Windows, Linux, or macOS with **Python 3.9+**, no pip installations, and a reachable **OpenAI-compatible chat model endpoint**. A model is not bundled or started for you.
 
-- **Eric — Poet/Narrator** (with optional private source poems — see below)
-- **Eric — Short Fiction** (source-derived craft fingerprint)
-- Edgar Allan Poe — Gothic Lyric · Beneath the Beats — West Coast Voice ·
-  Dust and Duty — Last Gunslinger Voice · The Forsaken Flame — Exile’s Voice
-- Robin Hood — The Merry Outlaw · Zorro — The Masked Fox ·
-  Dracula — The Ancient Count · Sherlock Holmes — The Consulting Mind
+> [!IMPORTANT]
+> **LAN security:** v1.1.0 has **no built-in user login or HTTPS**. Anyone who can reach the Writer web port may be able to read or modify writing and settings. Use it only on a trusted LAN, or bind to \`127.0.0.1\` for local-only access. **Do not expose it directly to the public internet.**
 
-## New in v1.1.0
+## At a glance
 
-- **Editorial & Craft Handoff** provides optional non-destructive critiques and suggested revisions, plus browser downloads as HTML, Markdown or plain text. Link to your existing Craft Suite homepage without requiring it. See [Craft Suite notes](docs/CRAFT_SUITE.md).
-- **Linux install helper**, installable from a Git clone; no systemd services started or modified by default. See [Installation](docs/INSTALL.md).
-- Private poems are intentionally **not included in the public source package**. Author keeps the voice add-on separately.
+| Workspace | What you can do |
+| :-- | :-- |
+| 🪶 **Poetry Forge** | Create poems with guided controls for form, rhyme, rhythm, imagery, and literary voice. Polish existing poems, revise selected lines with three alternatives, and browse versioned drafts. |
+| 📖 **Short Story Forge** | Generate or polish short fiction with story-specific guidance, chosen voices, and checks that a revision actually changes the text. |
+| 🌌 **Novel Forge** | Build universes with characters, settings, artifacts, timelines, mysteries, scenes, and notes. Manage universe files and export a story bible. |
+| 📚 **Story Forge** | Organize longer projects, plan chapters, track continuity handoffs, edit drafts, and manage manuscript prose with approval-gated saves and backup-aware editing. |
+| 🧵 **The Weaver** | Combine 2–4 source texts into fresh poetry, fiction, prose, or Twine-ready passages with source mapping and reuse warnings. |
+| 🗂️ **My Writing** | Search and revisit saved poems, stories, and version groups. |
+| ✍️ **Editorial & Craft Handoff** | Request optional critique or suggested revisions **without overwriting the original**, then download HTML, Markdown, or text for further editing. |
+
+One application, one left-hand navigation tree, and an independent writing-data folder. The forges work together but **do not require the rest of FOXAI**.
 
 ## Quick start
 
-Requires **Python 3.9+** and any **OpenAI-compatible model endpoint**
-(llama.cpp `llama-server`, LM Studio, Ollama, llamafile, vLLM, …).
+### Option A — Run from GitHub (Windows, Linux, macOS)
 
-```bash
-# 1. Start a model server, e.g. llama.cpp:
-#    llama-server -m your-model.gguf --port 8080
+**Requirements:** Git, Python **3.9+**, and a model server with an OpenAI-compatible chat API.
 
-# 2. Start Kayock Writer:
-python kayock_writer.py --base-url http://127.0.0.1:8080
+\`\`\`bash
+git clone https://github.com/kayock/Kayock-Writer.git
+cd Kayock-Writer
+python3 kayock_writer.py --base-url http://127.0.0.1:8080 --model local-model
+\`\`\`
 
-# 3. Open http://localhost:8765 — LAN users: http://<this-machine-IP>:8765
-```
+On Windows, use \`py\` or \`python\` in place of \`python3\` if appropriate.
 
-Full instructions: [docs/INSTALL.md](docs/INSTALL.md) ·
-Feature parity and limitations: [docs/PARITY.md](docs/PARITY.md) ·
-Private voice pack: [docs/PRIVATE_VOICE_PACK.md](docs/PRIVATE_VOICE_PACK.md)
+Open **http://localhost:8765** on the machine hosting Writer. From another device on your trusted LAN, open **http://SERVER-LAN-IP:8765**, replacing \`SERVER-LAN-IP\` with that machine's address.
 
-## Configuration
+The \`--base-url\` above is only an **example**: it points to the model server, **not** to Writer's browser address. The model can be on the same machine or another reachable host.
 
-Everything is configurable via `config.json`, environment variables, or CLI
-flags (CLI wins, then env, then config file, then defaults):
+Examples of compatible endpoints:
 
-```bash
-python kayock_writer.py --host 0.0.0.0 --port 8765 \
-    --data-dir ./KayockWriterData \
-    --base-url http://127.0.0.1:8080 --model local-model
-```
+| Model server | Example base URL |
+| :-- | :-- |
+| llama.cpp \`llama-server\` | \`http://127.0.0.1:8080\` |
+| LM Studio | \`http://127.0.0.1:1234\` |
+| Ollama (OpenAI-compatible API) | \`http://127.0.0.1:11434\` |
+| A model server elsewhere on your LAN | \`http://MODEL-SERVER-IP:PORT\` |
 
-Model settings can also be changed live in **Settings → Model endpoint**
-(saved to `config.json`, takes effect immediately). The API key is read from
-`KAYOCK_MODEL_API_KEY` (preferred) or the config file, and is never logged or
-sent to the browser.
+Choose the real model identifier expected by your server with \`--model\`. For servers needing authentication, set \`KAYOCK_MODEL_API_KEY\` in Writer's environment.
 
-See `config.example.json` for the full reference.
+### Option B — Install a separate copy on Linux
 
-## Storage (all app-owned, no FOXAI paths)
+\`\`\`bash
+git clone https://github.com/kayock/Kayock-Writer.git
+cd Kayock-Writer
+bash deploy/install-linux.sh
+cd "$HOME/Applications/KayockWriter"
+python3 kayock_writer.py --base-url http://127.0.0.1:8080 --model local-model
+\`\`\`
 
-```
-<data_dir>/
-├── Projects/KayockWriter/     poems, short stories, recordings, weaver outputs
-│   └── <StoryProject>/        Story Forge projects (manifest, chapters, drafts, prose)
-├── NovelForge/                Novel Forge universes (+ Markdown/, Exports/)
-├── Reports/KayockWriter/      action receipts
-├── Backups/KayockWriter/      automatic pre-overwrite backups
-└── voice_packs/               optional private voice packs
-```
+The install helper **copies the application** to \`~/Applications/KayockWriter\` by default. It does **not** use sudo, create or restart services, alter firewalls, start models, or enable autostart. Existing \`config.json\`, private add-ons, and writing data are preserved. Set \`KAYOCK_WRITER_INSTALL_DIR\` to choose another destination.
 
-FOXAI `NovelForge/*.json` universe files can be copied into `<data_dir>/NovelForge/`
-directly — the schema is unchanged. FOXAI poem/story draft markdown files can be
-copied into the corresponding `Projects/KayockWriter/.../Drafts` folders.
+There is no need to run the helper if you prefer to run directly from the cloned repository.
 
-## Tests and verification
+**Full instructions:** [Installation & troubleshooting](docs/INSTALL.md) · [Example configuration](config.example.json)
 
-```bash
-python tests/verify_kayock_writer.py   # fast offline self-check (18 checks)
-python tests/run_tests.py              # 53-test suite incl. a mock model endpoint
-```
+## Your literary voice library
 
-The test suite starts a bundled mock OpenAI-compatible server, so the full
-workflows are exercised with no real model and no network access.
+Writer includes **10 literary writing profiles**—instructions for how text is composed, **not text-to-speech voices**.
 
-## Provenance and license notice
+| Original writer voices | Literary & archetype voices |
+| :-- | :-- |
+| **Eric — Poet/Narrator** | Edgar Allan Poe — Gothic Lyric |
+| **Eric — Short Fiction** | Beneath the Beats — West Coast Voice |
+| | Dust and Duty — Last Gunslinger Voice |
+| | The Forsaken Flame — Exile's Voice |
+| | Robin Hood — The Merry Outlaw |
+| | Zorro — The Masked Fox |
+| | Dracula — The Ancient Count |
+| | Sherlock Holmes — The Consulting Mind |
 
-Kayock Writer is an extraction of FOXAI writing-tool code. The upstream
-`LICENSE` is a personal-project placeholder, **not** an open-source grant —
-see [LICENSE_NOTES.md](LICENSE_NOTES.md) before redistributing. The Eric
-poems in `addons/private_eric_poet_narrator/` are copyrighted and private.
+The profiles guide cadence, imagery, tone, narrative structure, and originality boundaries. They are intended to help create **new writing**, rather than reproduce passages from reference works.
+
+**Private author add-on:** The public repository includes the Eric Poet/Narrator *style profile* but **does not contain the four original reference poems**. The author can install a separately supplied private voice pack locally to restore the full source-informed prompt. Never commit that pack or include it in a public release. When installed, its poems are sent as prompt context to the **configured model endpoint**—only use an endpoint you trust with that material.
+
+[Private voice pack instructions](docs/PRIVATE_VOICE_PACK.md)
+
+## Write, revise, keep the original
+
+Kayock Writer distinguishes **generation**, **suggestion**, and **approved changes**.
+
+- **Poetry / short fiction:** Create with guided prompts, polish a draft, or request alternatives for a selected passage. Saved drafts use metadata and version grouping.
+- **Novel building:** Maintain a universe's premise, cast, places, events, secrets, and scenes. Export story-bible content as **JSON, Markdown, or plain text**.
+- **Long-form Story Forge:** Use project and chapter workflows with preview-and-approval gates, continuity notes, versioned drafts, and backups before applicable edits.
+- **Editorial & Craft Handoff (v1.1.0):** Ask the current model for critique or a suggested passage. Suggestions remain separate until you manually choose to use them.
+
+The interface is a writing workspace, not a replacement for editorial judgment: review generated material and backups before relying on them.
+
+## Optional Craft Suite workflow
+
+Writer can help you prepare prose or poetry for further formatting in **Craft Suite / WordCraft**:
+
+1. Draft or open material in a Forge.
+2. Open **Editorial & Craft Handoff** for optional feedback and revision suggestions.
+3. Export **HTML**, **Markdown**, or **TXT**. HTML includes print-friendly styling and preserves poetry line/stanza breaks.
+4. Open your separately configured Craft Suite homepage and **import the exported file manually**.
+
+**No Craft Suite installation is required.** The optional link opens its homepage; v1.1.0 does **not** claim direct WordCraft API transfer, DOCX creation, or automatic two-way synchronization.
+
+[Craft Suite handoff details](docs/CRAFT_SUITE.md)
+
+## Configuration and data
+
+Common launch options:
+
+\`\`\`bash
+# Accessible only from this machine
+python3 kayock_writer.py --host 127.0.0.1 --port 8765
+
+# Use a custom data directory and model server
+python3 kayock_writer.py \
+  --host 0.0.0.0 --port 8765 \
+  --data-dir ./KayockWriterData \
+  --base-url http://127.0.0.1:8080 \
+  --model local-model
+
+# Check model reachability and configuration without launching Writer
+python3 kayock_writer.py --check
+\`\`\`
+
+Settings can be supplied by **CLI flags → environment variables → \`config.json\` → defaults**, in that order. Model endpoint settings can also be changed from Writer's **Settings** page. A configured model API key is not sent to the browser; prefer the \`KAYOCK_MODEL_API_KEY\` environment variable instead of saving secrets in \`config.json\`.
+
+By default, the app stores its work in \`./KayockWriterData/\`:
+
+\`\`\`text
+KayockWriterData/
+├── Projects/
+│   └── KayockWriter/         # Poems, stories, recordings, story projects
+├── NovelForge/               # Universes and story-bible exports
+├── Reports/KayockWriter/     # Operation reports / receipts
+├── Backups/KayockWriter/     # Pre-overwrite backups
+└── voice_packs/              # Optional private author profiles
+\`\`\`
+
+You may **copy** compatible existing FOXAI universe JSON files, poem/story Markdown drafts, and Story Forge project folders into the matching locations. Copy rather than move, and back up originals before migrating. Writer does not need FOXAI to be installed or running.
+
+[Configuration reference](docs/INSTALL.md#3-configuration-reference) · [FOXAI parity and known differences](docs/PARITY.md)
+
+## Verify the installation
+
+These checks run with Python's standard library; the workflow tests use a **bundled mock model server**, not a real model:
+
+\`\`\`bash
+python3 tests/verify_kayock_writer.py   # 18 self-verification checks
+python3 tests/run_tests.py              # 53 original tests
+python3 tests/test_upgrade.py           # 6 v1.1.0 upgrade tests
+\`\`\`
+
+GitHub Actions runs these checks on **Python 3.9 and 3.12** on pushes and pull requests. See [CI results](https://github.com/kayock/Kayock-Writer/actions/workflows/tests.yml). Local test success does not itself confirm the model server, microphone, or other LAN services in your particular installation.
+
+## Updating from GitHub
+
+When a new version is available, the recommended source-based workflow is:
+
+\`\`\`bash
+cd Kayock-Writer
+git pull --ff-only
+\`\`\`
+
+If you originally used the Linux install helper, run \`bash deploy/install-linux.sh\` again from the updated clone to copy the newer application files. **The helper does not restart the app or touch existing processes.** Stop/restart your own Writer instance when you are ready to use the updated code, after backing up your writing data.
+
+## Notes on security, provenance and licensing
+
+- **No login and HTTP by default:** only expose the web UI to trusted devices. To restrict it to the host, start with \`--host 127.0.0.1\`. Remote internet access would require your own properly configured access controls and TLS termination.
+- **Endpoint privacy:** writing prompts are sent to the model endpoint **you configure**. If that endpoint is cloud-hosted or shared, your text may leave your machine.
+- **Source provenance:** extracted from [FOXAI](https://github.com/kayock/FOXAI_) at commit \`b510e5c38c0a1fa41f61b6c65e74ce1812f1ecdb\`; FOXAI itself remains separate. Some Story Forge workflows were adapted rather than copied byte-for-byte.
+- **License:** this Kayock Writer repository is under the [MIT License](LICENSE). That license does **not** relicense all of FOXAI or the privately held poems. See [LICENSE_NOTES.md](LICENSE_NOTES.md).
+
+---
+
+**Built by Kayock.** A place for poems, stories, imagined worlds, and writing that stays yours.
