@@ -1,0 +1,22 @@
+# Local settings and writing data (never commit)
+config.json
+KayockWriterData/
+Data/
+*.db
+*.sqlite
+*.sqlite3
+.env
+# Author's private writing source pack
+addons/private_eric_poet_narrator/
+**/eric_poet_narrator_private.json
+**/voice_packs/
+# Python and editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.idea/
+.vscode/
+# Generated test reports
+*.log

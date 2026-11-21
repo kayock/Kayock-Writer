@@ -1,0 +1,28 @@
+{
+  "_comment": "Kayock Writer example configuration. Copy to config.json next to kayock_writer.py and edit. CLI flags and environment variables override this file. API key: prefer the KAYOCK_MODEL_API_KEY environment variable; if set here, protect this file.",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8765,
+    "allow_folder_open": true
+  },
+  "model": {
+    "base_url": "http://127.0.0.1:8080",
+    "chat_path": "/v1/chat/completions",
+    "health_path": "/health",
+    "health_kind": "auto",
+    "model": "local-model",
+    "api_key": "",
+    "timeout_seconds": 420
+  },
+  "paths": {
+    "data_dir": "./KayockWriterData"
+  },
+  "writing": {
+    "default_author": "Eric Z. Fox",
+    "require_approval_phrase": true,
+    "archive_limit": 500
+  },
+  "integrations": {
+    "craft_suite_url": ""
+  }
+}
