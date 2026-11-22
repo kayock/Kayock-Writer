@@ -7,6 +7,7 @@ import json
 import sys
 import shutil
 import subprocess
+import unicodedata
 import tempfile
 import unittest
 import zipfile
@@ -176,8 +177,15 @@ class UnicodeFontTests(unittest.TestCase):
                     capture_output=True, text=True, timeout=20
                 )
                 self.assertEqual(extracted.returncode,0,extracted.stderr)
-                self.assertIn("Alpha Ω",extracted.stdout)
-                self.assertIn("café",extracted.stdout)
+                # Some Poppler builds normalize equivalently rendered Greek
+                # Omega into the compatibility-equivalent OHM SIGN (U+2126).
+                # NFKC tests the character's canonical meaning without
+                # accepting missing glyphs, replacement chars or lost words.
+                normalized=unicodedata.normalize("NFKC",extracted.stdout)
+                self.assertIn("Alpha Ω",normalized,
+                              [hex(ord(x)) for x in extracted.stdout[:30]])
+                self.assertIn("café",normalized)
+                self.assertNotIn("\ufffd",normalized)
         book=sample_book(font=font)
         result=build_book_export(book,"pdf")
         self.assertTrue(result["body"].startswith(b"%PDF-"))
