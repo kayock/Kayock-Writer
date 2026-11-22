@@ -290,7 +290,7 @@ class CouncilHttpTests(unittest.TestCase):
         ):
             self.assertIn(piece,html)
         self.assertIn('id="councilSummary" class="big" readonly',html)
-        self.assertIn('id="councilSynthesize" onclick="councilSynthesize()" disabled',html)
+        self.assertIn('id="councilSynthesizeButton" onclick="councilSynthesize()" disabled',html)
 
 
 if __name__=="__main__":
