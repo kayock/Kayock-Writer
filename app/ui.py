@@ -1131,6 +1131,190 @@ async function storyEditorApply(){
   q('storyEditorStatus').className='status '+(d.ok?'ok':'err');
   if(d.ok)storyEditorLoad();
 }
+/* ========================= visual scene corkboard ========================= */
+const sceneBoardState={board:null,revision:null,busy:false,editing:null};
+const SCENE_LANES=[
+  ['ideas','Ideas'],['outlined','Outlined'],['drafting','Drafting'],
+  ['revising','Revising'],['ready','Ready'],['parked','Parked']
+];
+function sceneBoardClearEditor(){
+  sceneBoardState.editing=null;
+  for(const name of ['Title','Chapter','Pov','Location','Summary','Beats'])
+    q('sceneBoard'+name).value='';
+  q('sceneBoardEditLabel').textContent='New scene card';
+  q('sceneBoardSave').textContent='Add scene';
+}
+function sceneBoardUpdateBooks(){
+  const project=q('sceneBoardProject').value;
+  const item=S.projects.find(p=>p.project_id===project);
+  const book=q('sceneBoardBook');
+  const selected=book.value||S.story.book;
+  const books=(item&&item.books)||[];
+  book.replaceChildren();
+  for(const b of books)book.appendChild(new Option(b.title||b.id,b.id));
+  if(books.some(b=>b.id===selected))book.value=selected;
+  sceneBoardClearEditor();
+}
+async function renderSceneBoard(){
+  await loadProjects();
+  const project=q('sceneBoardProject');
+  const selected=project.value||S.story.project;
+  project.innerHTML=projectOptions(selected);
+  if(S.projects.some(p=>p.project_id===selected))project.value=selected;
+  sceneBoardUpdateBooks();
+  await sceneBoardRefresh();
+}
+async function sceneBoardRefresh(){
+  const project=q('sceneBoardProject').value;
+  const book=q('sceneBoardBook').value;
+  sceneBoardState.board=null;
+  sceneBoardState.revision=null;
+  const target=q('sceneBoardLanes');
+  target.replaceChildren();
+  if(!project||!book){
+    q('sceneBoardStatus').textContent='Create or select a Story Forge project and book first.';
+    return;
+  }
+  q('sceneBoardStatus').textContent='Loading saved scene plan…';
+  const result=await api('/api/writer/story/scene_board?project_id='+encodeURIComponent(project)+
+      '&book_id='+encodeURIComponent(book));
+  if(project!==q('sceneBoardProject').value||book!==q('sceneBoardBook').value)return;
+  if(!result.ok){
+    q('sceneBoardStatus').textContent=result.message||'Unable to load scene board.';
+    return;
+  }
+  sceneBoardState.board=result.board;
+  sceneBoardState.revision=result.revision;
+  q('sceneBoardStatus').textContent='Planning board loaded. Manuscripts and versioned drafts remain separate.';
+  q('sceneBoardStatus').className='status';
+  sceneBoardDraw();
+}
+async function sceneBoardChange(change){
+  if(sceneBoardState.busy||!sceneBoardState.board||!sceneBoardState.revision)return false;
+  sceneBoardState.busy=true;
+  const project=q('sceneBoardProject').value,book=q('sceneBoardBook').value;
+  q('sceneBoardSave').disabled=true;
+  let result;
+  try{
+    result=await api('/api/writer/story/scene_board/change',{
+      project_id:project,book_id:book,expected_revision:sceneBoardState.revision,...change
+    });
+  }catch(e){
+    result={ok:false,message:'Could not reach scene board: '+String(e)};
+  }finally{
+    sceneBoardState.busy=false;
+    q('sceneBoardSave').disabled=false;
+  }
+  if(project!==q('sceneBoardProject').value||book!==q('sceneBoardBook').value)return false;
+  if(!result.ok){
+    q('sceneBoardStatus').textContent=result.message||'Scene board change rejected.';
+    q('sceneBoardStatus').className='status err';
+    toast('Scene not saved. Refresh to resolve an outdated board.','err');
+    return false;
+  }
+  sceneBoardState.board=result.board;
+  sceneBoardState.revision=result.revision;
+  q('sceneBoardStatus').textContent='Scene plan saved; chapter drafts and manuscripts unchanged.';
+  q('sceneBoardStatus').className='status ok';
+  sceneBoardDraw();
+  return true;
+}
+async function sceneBoardSave(){
+  const fields={title:q('sceneBoardTitle').value,chapter:q('sceneBoardChapter').value,
+    pov:q('sceneBoardPov').value,location:q('sceneBoardLocation').value,
+    summary:q('sceneBoardSummary').value,beats:q('sceneBoardBeats').value};
+  const id=sceneBoardState.editing;
+  const saved=await sceneBoardChange(id?
+    {action:'update',card_id:id,fields}:{action:'add',status:'ideas',fields});
+  if(saved)sceneBoardClearEditor();
+}
+function sceneBoardEdit(cardId){
+  const c=sceneBoardState.board&&sceneBoardState.board.cards.find(x=>x.id===cardId);
+  if(!c)return;
+  sceneBoardState.editing=cardId;
+  const fields=[['title','Title'],['chapter','Chapter'],['pov','Pov'],
+    ['location','Location'],['summary','Summary'],['beats','Beats']];
+  for(const [key,id] of fields)q('sceneBoard'+id).value=c[key]||'';
+  q('sceneBoardEditLabel').textContent='Edit scene: '+c.title;
+  q('sceneBoardSave').textContent='Save scene changes';
+  q('sceneBoardTitle').focus();
+}
+async function sceneBoardMove(id,status,beforeId){
+  if(!sceneBoardState.board)return;
+  const c=sceneBoardState.board.cards.find(x=>x.id===id);
+  if(!c)return;
+  const same=sceneBoardState.board.cards.filter(x=>x.status===status);
+  if(c.status===status&&!beforeId&&same[same.length-1]===c)return;
+  await sceneBoardChange({action:'move',card_id:id,status,before_id:beforeId||null});
+}
+function sceneBoardDraw(){
+  const board=sceneBoardState.board;
+  const root=q('sceneBoardLanes');
+  root.replaceChildren();
+  if(!board)return;
+  const mk=(tag,value,cls)=>{
+    const el=document.createElement(tag);
+    if(value!=null)el.textContent=value;
+    if(cls)el.className=cls;
+    return el;
+  };
+  for(const [lane,label] of SCENE_LANES){
+    const col=mk('div',null,'scene-lane');
+    col.dataset.lane=lane;
+    const cards=board.cards.filter(c=>c.status===lane);
+    col.appendChild(mk('h4',label+' · '+cards.length));
+    col.addEventListener('dragover',e=>{
+      e.preventDefault();col.classList.add('drag-hover');
+    });
+    col.addEventListener('dragleave',e=>{
+      if(!col.contains(e.relatedTarget))col.classList.remove('drag-hover');
+    });
+    col.addEventListener('drop',async e=>{
+      e.preventDefault();col.classList.remove('drag-hover');
+      const id=e.dataTransfer&&e.dataTransfer.getData('text/plain');
+      if(id)await sceneBoardMove(id,lane,null);
+    });
+    for(let i=0;i<cards.length;i++){
+      const card=cards[i];
+      const note=mk('div',null,'scene-note');
+      note.draggable=true;
+      note.addEventListener('dragstart',e=>{
+        e.dataTransfer.setData('text/plain',card.id);e.dataTransfer.effectAllowed='move';
+      });
+      note.addEventListener('dragover',e=>e.preventDefault());
+      note.addEventListener('drop',async e=>{
+        e.preventDefault();e.stopPropagation();
+        const id=e.dataTransfer&&e.dataTransfer.getData('text/plain');
+        if(id&&id!==card.id)await sceneBoardMove(id,lane,card.id);
+      });
+      note.appendChild(mk('strong',card.title));
+      if(card.chapter)note.appendChild(mk('div','Chapter: '+card.chapter,'small'));
+      const meta=[card.pov&&'POV '+card.pov,card.location&&'Location '+card.location]
+        .filter(Boolean).join(' · ');
+      if(meta)note.appendChild(mk('div',meta,'small'));
+      if(card.summary)note.appendChild(mk('div',card.summary,'small'));
+      if(card.beats)note.appendChild(mk('div','Beats: '+card.beats,'small'));
+      const row=mk('div',null,'row');
+      const action=(label,click,disabled=false)=>{
+        const b=mk('button',label,'btn');
+        b.type='button';b.disabled=disabled;b.addEventListener('click',click);row.appendChild(b);
+      };
+      action('Edit',()=>sceneBoardEdit(card.id));
+      action('↑',()=>sceneBoardMove(card.id,lane,cards[i-1]&&cards[i-1].id),i===0);
+      action('↓',()=>sceneBoardMove(card.id,lane,cards[i+2]&&cards[i+2].id),i===cards.length-1);
+      const select=mk('select');
+      select.setAttribute('aria-label','Move '+card.title+' to another lane');
+      for(const [id,title] of SCENE_LANES)select.appendChild(new Option(title,id));
+      select.value=lane;
+      select.addEventListener('change',()=>sceneBoardMove(card.id,select.value,null));
+      row.appendChild(select);
+      action('Park',()=>sceneBoardMove(card.id,'parked',null),lane==='parked');
+      note.appendChild(row);
+      col.appendChild(note);
+    }
+    root.appendChild(col);
+  }
+}
 async function renderStoryDrafts(){
   await loadProjects();
   q('storyDraftsProject').innerHTML=projectOptions(S.story.project);
