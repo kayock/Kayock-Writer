@@ -54,8 +54,13 @@ def _source(payload: Dict[str, Any]) -> Dict[str, str]:
     for part in (title, author, text):
         _safe_xml(part)
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", title)[:80].strip("_") or "Kayock_Writing"
+    font = None
+    if fmt == "pdf":
+        from .unicode_pdf import decode_font
+        font = decode_font(payload.get("pdf_ttf_base64"))
     return {"title": title, "author": author, "text": text,
-            "writing_type": writing_type, "format": fmt, "filename": safe + "." + fmt}
+            "writing_type": writing_type, "format": fmt,
+            "pdf_font": font, "filename": safe + "." + fmt}
 
 
 def _paragraphs(text: str) -> List[str]:
@@ -221,11 +226,16 @@ def build_export(payload: Dict[str, Any]) -> Dict[str, Any]:
     elif source["format"] == "epub":
         content = _epub(source)
     else:
-        from .pdf_publishing import make_pdf
-        content = make_pdf(
-            source["title"], source["author"],
-            [{"title": source["title"], "text": source["text"]}]
-        )
+        passages = [{"title": source["title"], "text": source["text"]}]
+        if source.get("pdf_font"):
+            from .unicode_pdf import make_unicode_pdf
+            content = make_unicode_pdf(
+                source["title"], source["author"], passages,
+                source["pdf_font"]
+            )
+        else:
+            from .pdf_publishing import make_pdf
+            content = make_pdf(source["title"], source["author"], passages)
     return {
         "ok": True, "filename": source["filename"],
         "content_type": MIMES[source["format"]], "body": content,
