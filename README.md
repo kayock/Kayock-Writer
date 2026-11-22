@@ -24,11 +24,16 @@ author decisions, optional synthesis, explicitly approved revision and
 DOCX/EPUB/PDF browser downloads. Playwright and Chromium are installed
 **only in CI**; Writer's Python runtime remains dependency-free.
 
-This is not real-model validation or final release approval. Actual
-local-model behavior, browser usability, upgrade/recovery checks, and
+This is not real-model validation or final release approval. GitHub
+also tests an **isolated Linux source installation** and **Windows/Linux
+copied-source launch**, checking that custom config/manuscripts remain
+untouched. The browser job independently renders a synthetic book PDF
+and uploads a short-lived **DOCX/EPUB/PDF visual proof bundle**.
+Actual local-model behavior, real-world upgrade/rollback, and human
 visual proofing in Word, e-readers and PDF viewers still require
 hands-on acceptance. See the
-[Release Acceptance Checklist](docs/RELEASE_ACCEPTANCE.md) for all
+[Release Acceptance Checklist](docs/RELEASE_ACCEPTANCE.md)
+and [one-session Real Model Acceptance](docs/REAL_MODEL_ACCEPTANCE.md) for all
 remaining gates, with no claimed result for tests that have not run.
 
 ## Development branch preview — not yet a release
