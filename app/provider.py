@@ -151,6 +151,81 @@ class Provider:
                 "message": "The configured model endpoint is not responding. "
                            "Check Settings → Model endpoint."}
 
+    def advertised_capabilities(self, timeout: float = 5.0) -> Dict[str, Any]:
+        """Read *advertised* OpenAI model metadata, without running inference.
+
+        Model servers frequently omit capabilities. We report unknown rather
+        than infer from a model name, and do not modify config or context.
+        This is an optional, read-only diagnostic request.
+        """
+        ok, body, error = self._request(self.base_url() + "/v1/models", None, timeout)
+        if not ok:
+            return {
+                "ok": False,
+                "message": "Model metadata is unavailable: " + error,
+                "model": self.model_name(),
+                "settings_changed": False,
+            }
+        try:
+            data = json.loads(body)
+        except (ValueError, TypeError):
+            return {"ok": False, "message": "The models endpoint did not return valid JSON.",
+                    "settings_changed": False}
+        if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+            return {"ok": False, "message": "The models endpoint returned no model list.",
+                    "settings_changed": False}
+        records = [m for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)]
+        names = [m["id"] for m in records]
+        target = next((m for m in records if m["id"] == self.model_name()), None)
+
+        def declared_bool(record: Dict[str, Any], keys) -> bool | None:
+            nested = record.get("capabilities")
+            if not isinstance(nested, dict):
+                nested = {}
+            for key in keys:
+                for obj in (record, nested):
+                    value = obj.get(key)
+                    if type(value) is bool:
+                        return value
+            return None
+
+        window = None
+        if target is not None:
+            for key in ("context_length", "context_window", "max_model_len",
+                        "max_context_length", "n_ctx"):
+                value = target.get(key)
+                if type(value) is int and value > 0:
+                    window = value
+                    break
+        return {
+            "ok": True, "source": "GET /v1/models",
+            "model": self.model_name(),
+            "model_found": target is not None,
+            "advertised_models": names,
+            "advertised_model_count": len(names),
+            "declared_context_window": window,
+            "declared_tool_calling": (
+                declared_bool(target, ("tool_calling", "supports_tool_calls",
+                                       "tools", "function_calling"))
+                if target is not None else None
+            ),
+            "declared_vision": (
+                declared_bool(target, ("vision", "supports_vision",
+                                       "image_input"))
+                if target is not None else None
+            ),
+            "declared_streaming": (
+                declared_bool(target, ("streaming", "supports_streaming"))
+                if target is not None else None
+            ),
+            "settings_changed": False,
+            "note": (
+                "Only capabilities explicitly advertised by the endpoint are shown. "
+                "Unknown means not reported, not unsupported. No model was loaded "
+                "and no context or timeout setting was changed."
+            ),
+        }
+
     def chat(self, messages: List[Dict[str, str]], max_tokens: int = 900,
              temperature: float = 0.82) -> Dict[str, Any]:
         """One chat completion. Returns {'ok': bool, 'text'/'message', ...}."""
