@@ -18,7 +18,11 @@ Layout (under data_dir):
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -51,11 +55,41 @@ def jread(path: Path, default: Any = None) -> Any:
         return default
 
 
-def jwrite(path: Path, data: Any) -> Path:
+def atomic_write_text(path: Path, text: str) -> Path:
+    """Replace one text file atomically, keeping the old file if writing fails.
+
+    The staging file is on the destination filesystem so os.replace is atomic.
+    No migration or edit to existing project formats is performed.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="",
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            temp_name = tmp.name
+            tmp.write(text)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        if path.exists():
+            os.chmod(temp_name, path.stat().st_mode & 0o777)
+        os.replace(temp_name, path)
+        temp_name = None
+    finally:
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
     return path
+
+
+def jwrite(path: Path, data: Any) -> Path:
+    """Atomic JSON replacement. The on-disk schema stays unchanged."""
+    return atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 def contained(child: Path, parent: Path) -> bool:
@@ -127,6 +161,7 @@ class Store:
             else self.folders["backups"] / slug(kind)
         )
         target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"{src.stem}_{stamp()}{src.suffix}"
-        target.write_bytes(src.read_bytes())
+        # Multiple edits in one second must create *different* backups.
+        target = target_dir / f"{src.stem}_{stamp()}_{uuid.uuid4().hex[:12]}{src.suffix}"
+        shutil.copy2(src, target)
         return target
