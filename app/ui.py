@@ -1137,10 +1137,138 @@ const SCENE_LANES=[
   ['ideas','Ideas'],['outlined','Outlined'],['drafting','Drafting'],
   ['revising','Revising'],['ready','Ready'],['parked','Parked']
 ];
+/* ========================= series / book / act outline ========================= */
+const seriesPlanState={project:'',revision:null,outline:null,busy:false};
+async function seriesOutlineRefresh(){
+  const project=q('sceneBoardProject').value;
+  seriesPlanState.project=project;
+  seriesPlanState.revision=null;
+  seriesPlanState.outline=null;
+  if(!project){
+    q('seriesPlanStatus').textContent='Choose a Story Forge project.';
+    return;
+  }
+  const d=await api('/api/writer/story/series_outline?project_id='+encodeURIComponent(project));
+  if(project!==q('sceneBoardProject').value)return;
+  if(!d.ok){
+    q('seriesPlanStatus').textContent=d.message||'Series outline unavailable.';
+    return;
+  }
+  seriesPlanState.revision=d.revision;
+  seriesPlanState.outline=d.outline;
+  q('seriesPlanTitle').value=d.outline.series_title||'';
+  q('seriesPlanNotes').value=d.outline.series_notes||'';
+  q('seriesPlanStatus').textContent='Series and acts are an optional planning layer. Existing project and draft files are unchanged.';
+  q('seriesPlanStatus').className='status';
+  seriesOutlineDraw();
+  sceneBoardRefreshOptions();
+}
+function seriesOutlineDraw(){
+  const target=q('seriesPlanActs');
+  target.replaceChildren();
+  const outline=seriesPlanState.outline;
+  if(!outline)return;
+  const current=q('sceneBoardBook').value;
+  const acts=outline.acts.filter(act=>act.book_id===current);
+  const label=document.createElement('div');
+  label.className='small';
+  label.textContent=acts.length+' act(s) in the selected book. Act identifiers remain stable when renamed.';
+  target.appendChild(label);
+  for(const act of acts){
+    const row=document.createElement('div');
+    row.className='card';
+    const title=document.createElement('strong');
+    title.textContent=act.title;
+    const summary=document.createElement('p');
+    summary.textContent=act.summary||'(No act summary)';
+    const edit=document.createElement('button');
+    edit.className='btn';
+    edit.textContent='Edit act';
+    edit.addEventListener('click',()=>seriesEditAct(act.id));
+    row.appendChild(title);row.appendChild(summary);row.appendChild(edit);
+    target.appendChild(row);
+  }
+}
+async function seriesOutlineChange(change){
+  if(seriesPlanState.busy||!seriesPlanState.revision||
+      seriesPlanState.project!==q('sceneBoardProject').value)return false;
+  seriesPlanState.busy=true;
+  let d;
+  try{
+    d=await api('/api/writer/story/series_outline/change',{
+      project_id:seriesPlanState.project,
+      expected_revision:seriesPlanState.revision,
+      ...change
+    });
+  }catch(e){
+    d={ok:false,message:String(e)};
+  }finally{
+    seriesPlanState.busy=false;
+  }
+  if(seriesPlanState.project!==q('sceneBoardProject').value)return false;
+  q('seriesPlanStatus').textContent=d.message||'Series outline update failed.';
+  q('seriesPlanStatus').className='status '+(d.ok?'ok':'err');
+  if(!d.ok)return false;
+  seriesPlanState.revision=d.revision;
+  seriesPlanState.outline=d.outline;
+  seriesOutlineDraw();
+  await sceneBoardRefreshOptions();
+  return true;
+}
+function seriesSaveDetails(){
+  return seriesOutlineChange({action:'details',
+    series_title:q('seriesPlanTitle').value,
+    series_notes:q('seriesPlanNotes').value});
+}
+async function seriesAddAct(){
+  const title=q('seriesActTitle').value.trim();
+  const summary=q('seriesActSummary').value;
+  if(!title){q('seriesPlanStatus').textContent='Name the act first.';return;}
+  const saved=await seriesOutlineChange({action:'act_add',
+    book_id:q('sceneBoardBook').value,title,summary});
+  if(saved){q('seriesActTitle').value='';q('seriesActSummary').value='';}
+}
+async function seriesEditAct(id){
+  const act=seriesPlanState.outline&&seriesPlanState.outline.acts.find(a=>a.id===id);
+  if(!act)return;
+  const title=prompt('Rename act (stable scene links will be preserved):',act.title);
+  if(title===null)return;
+  const summary=prompt('Act description:',act.summary);
+  if(summary===null)return;
+  await seriesOutlineChange({action:'act_edit',act_id:id,title,summary});
+}
+async function sceneBoardRefreshOptions(){
+  const actSelect=q('sceneBoardAct');
+  const draftSelect=q('sceneBoardDraft');
+  const existingAct=actSelect.value,existingDraft=draftSelect.value;
+  actSelect.replaceChildren();
+  draftSelect.replaceChildren();
+  actSelect.appendChild(new Option('No act assigned',''));
+  draftSelect.appendChild(new Option('No chapter draft linked',''));
+  const book=q('sceneBoardBook').value;
+  const outline=seriesPlanState.outline;
+  for(const act of (outline&&outline.acts||[]).filter(a=>a.book_id===book))
+    actSelect.appendChild(new Option(act.title,act.id));
+  const project=q('sceneBoardProject').value;
+  if(!project||!book)return;
+  const result=await api('/api/writer/story/draft_version_history?project_id='+
+    encodeURIComponent(project)+'&book_id='+encodeURIComponent(book));
+  if(project!==q('sceneBoardProject').value||book!==q('sceneBoardBook').value)return;
+  for(const version of (result.ok&&result.versions||[])){
+    if(version.exists){
+      draftSelect.appendChild(new Option(version.chapter+' · v'+version.version+
+        ' · '+version.filename,version.filename));
+    }
+  }
+  if([...actSelect.options].some(o=>o.value===existingAct))actSelect.value=existingAct;
+  if([...draftSelect.options].some(o=>o.value===existingDraft))draftSelect.value=existingDraft;
+}
 function sceneBoardClearEditor(){
   sceneBoardState.editing=null;
   for(const name of ['Title','Chapter','Pov','Location','Summary','Beats'])
     q('sceneBoard'+name).value='';
+  q('sceneBoardAct').value='';
+  q('sceneBoardDraft').value='';
   q('sceneBoardEditLabel').textContent='New scene card';
   q('sceneBoardSave').textContent='Add scene';
 }
@@ -1162,6 +1290,7 @@ async function renderSceneBoard(){
   project.innerHTML=projectOptions(selected);
   if(S.projects.some(p=>p.project_id===selected))project.value=selected;
   sceneBoardUpdateBooks();
+  await seriesOutlineRefresh();
   await sceneBoardRefresh();
 }
 async function sceneBoardRefresh(){
@@ -1185,6 +1314,7 @@ async function sceneBoardRefresh(){
   }
   sceneBoardState.board=result.board;
   sceneBoardState.revision=result.revision;
+  await sceneBoardRefreshOptions();
   q('sceneBoardStatus').textContent='Planning board loaded. Manuscripts and versioned drafts remain separate.';
   q('sceneBoardStatus').className='status';
   sceneBoardDraw();
@@ -1216,13 +1346,14 @@ async function sceneBoardChange(change){
   sceneBoardState.revision=result.revision;
   q('sceneBoardStatus').textContent='Scene plan saved; chapter drafts and manuscripts unchanged.';
   q('sceneBoardStatus').className='status ok';
-  sceneBoardDraw();
+  await sceneBoardRefresh();
   return true;
 }
 async function sceneBoardSave(){
   const fields={title:q('sceneBoardTitle').value,chapter:q('sceneBoardChapter').value,
     pov:q('sceneBoardPov').value,location:q('sceneBoardLocation').value,
-    summary:q('sceneBoardSummary').value,beats:q('sceneBoardBeats').value};
+    summary:q('sceneBoardSummary').value,beats:q('sceneBoardBeats').value,
+    act_id:q('sceneBoardAct').value,draft_filename:q('sceneBoardDraft').value};
   const id=sceneBoardState.editing;
   const saved=await sceneBoardChange(id?
     {action:'update',card_id:id,fields}:{action:'add',status:'ideas',fields});
@@ -1235,6 +1366,8 @@ function sceneBoardEdit(cardId){
   const fields=[['title','Title'],['chapter','Chapter'],['pov','Pov'],
     ['location','Location'],['summary','Summary'],['beats','Beats']];
   for(const [key,id] of fields)q('sceneBoard'+id).value=c[key]||'';
+  q('sceneBoardAct').value=c.act_id||'';
+  q('sceneBoardDraft').value=c.draft_filename||'';
   q('sceneBoardEditLabel').textContent='Edit scene: '+c.title;
   q('sceneBoardSave').textContent='Save scene changes';
   q('sceneBoardTitle').focus();
@@ -1289,6 +1422,11 @@ function sceneBoardDraw(){
       });
       note.appendChild(mk('strong',card.title));
       if(card.chapter)note.appendChild(mk('div','Chapter: '+card.chapter,'small'));
+      if(card.act_id)note.appendChild(mk('div','Act: '+(card.act_title||'unresolved act'),'small'));
+      if(card.draft_filename){
+        note.appendChild(mk('div',(card.draft_valid?'Linked draft: ':'Unresolved draft link: ')+
+          card.draft_filename,'small'));
+      }
       const meta=[card.pov&&'POV '+card.pov,card.location&&'Location '+card.location]
         .filter(Boolean).join(' · ');
       if(meta)note.appendChild(mk('div',meta,'small'));
@@ -2376,11 +2514,27 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <p>Plan scenes in lanes, arrange them by drag-and-drop or keyboard-friendly controls, and leave saved chapter drafts untouched.</p></div>
   <div class="card wide">
     <div class="row">
-      <div><label>Story Forge project</label><select id="sceneBoardProject" onchange="sceneBoardUpdateBooks();sceneBoardRefresh()"></select></div>
-      <div><label>Book</label><select id="sceneBoardBook" onchange="sceneBoardClearEditor();sceneBoardRefresh()"></select></div>
+      <div><label>Story Forge project</label><select id="sceneBoardProject" onchange="sceneBoardUpdateBooks();seriesOutlineRefresh();sceneBoardRefresh()"></select></div>
+      <div><label>Book</label><select id="sceneBoardBook" onchange="sceneBoardClearEditor();seriesOutlineDraw();sceneBoardRefresh()"></select></div>
       <div class="fixed"><button class="btn" onclick="sceneBoardRefresh()">Refresh board</button></div>
     </div>
     <div id="sceneBoardStatus" class="status">Choose an existing project and book. This is a separate planning board.</div>
+  </div>
+  <div class="card wide"><h3>Series / Book / Act Outline</h3>
+    <p class="small">Optional organization for this Story Forge project. Acts belong to existing books; renaming an act keeps stable links from scenes. No project manifest or prose is rewritten.</p>
+    <div class="row">
+      <div><label>Series title (optional)</label><input id="seriesPlanTitle" maxlength="160" placeholder="A planned series or saga"></div>
+      <div class="fixed"><button class="btn" onclick="seriesSaveDetails()">Save series details</button></div>
+    </div>
+    <label>Series notes</label><textarea id="seriesPlanNotes" maxlength="6000"></textarea>
+    <div id="seriesPlanStatus" class="status">Select a Story Forge project to organize acts.</div>
+    <h4>Acts in selected book</h4>
+    <div id="seriesPlanActs"></div>
+    <div class="row">
+      <div><label>New act title</label><input id="seriesActTitle" maxlength="140" placeholder="Act I — Arrival"></div>
+      <div><label>Act summary</label><input id="seriesActSummary" maxlength="3000"></div>
+      <div class="fixed"><button class="btn" onclick="seriesAddAct()">Add act</button></div>
+    </div>
   </div>
   <div class="card wide">
     <h3 id="sceneBoardEditLabel">New scene card</h3>
@@ -2392,6 +2546,11 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div><label>Point of view</label><input id="sceneBoardPov" type="text" maxlength="120"></div>
       <div><label>Location</label><input id="sceneBoardLocation" type="text" maxlength="160"></div>
     </div>
+    <div class="row">
+      <div><label>Act (optional, from series outline)</label><select id="sceneBoardAct"><option value="">No act assigned</option></select></div>
+      <div><label>Linked saved chapter draft (optional, read-only reference)</label><select id="sceneBoardDraft"><option value="">No chapter draft linked</option></select></div>
+    </div>
+    <p class="small">A link must point to a saved draft in this book, with a matching chapter label when one is supplied. Linking never imports or changes the draft.</p>
     <label>Scene summary</label><textarea id="sceneBoardSummary" maxlength="4000" placeholder="Goal, conflict, turn, and outcome"></textarea>
     <label>Beats / story notes</label><textarea id="sceneBoardBeats" maxlength="6000"></textarea>
     <div class="row"><button class="btn primary" id="sceneBoardSave" onclick="sceneBoardSave()">Add scene</button>
