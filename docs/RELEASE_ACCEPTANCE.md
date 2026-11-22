@@ -19,7 +19,10 @@
 | Disposable Linux installer | Repeated temp-dir installs preserve existing config/manuscripts; symlink target refused |
 | Windows and Linux copied-source launch | Temporary copy starts localhost-only without real models or existing user data |
 | Independent PDF reader | Poppler renders synthetic PDF pages and extracts expected author text |
-| Synthetic proof bundle | CI uploads example DOCX/EPUB/PDF, PDF page PNGs and extracted text for human inspection |
+| Synthetic proof bundle | CI uploads example DOCX/EPUB/PDF, optional-cover DOCX/EPUB, rendered PDF and EPUB page PNGs, and extracted PDF text for inspection |
+| Optional JPEG cover through browser | CI uploads synthetic JPEG via actual browser control; independently checks DOCX/EPUB cover assets and PDF image XObject |
+| Unicode TrueType PDF through browser | CI selects system DejaVuSans TTF, previews/export PDF with Omega, verifies embedded font and uses Poppler to extract/render glyph; **font and font-embedded PDF not uploaded as artifacts** |
+| EPUB XHTML reading proof | CI independently checks EPUB 3 mimetype/spine/TOC, then Chromium renders title, cover, chapters and follows TOC link. **Not a dedicated EPUB e-reader test** |
 
 The new browser-smoke GitHub Actions job exercises the **actual browser UI and HTTP server**. It launches a temporary sample Story Forge project and a deterministic **mock model**. The job clicks through independent Council reviews, an author-marked decision, optional synthesis, a verified revision preview and acceptance, and real DOCX/EPUB/PDF browser downloads. It confirms that edits after preview disable export and checks for uncaught JavaScript errors.
 
@@ -33,9 +36,19 @@ upgrades of a real installation.
 On a successful browser-smoke job, the CI runner uses Poppler to render
 the sample book PDF to page PNGs and independently extract its text.
 The job uploads a **seven-day synthetic publishing proof artifact**
-named **kayock-writer-synthetic-publishing-proofs** with the DOCX,
-EPUB, PDF, rendered PDF pages, and extracted text. No user manuscripts
-or licensed author-supplied font files are included.
+named **kayock-writer-synthetic-publishing-proofs** with the default
+DOCX/EPUB/PDF, optional-cover DOCX/EPUB, rendered PDF and EPUB
+page screenshots, and extracted PDF text. A separately extracted EPUB
+title, table of contents, CSS and chapter set is included solely for
+XHTML browser proof. An optional system TrueType font is selected through
+Writer's browser controls for a Unicode PDF test, but the test font and
+font-embedded PDF remain CI-private and are not uploaded as artifacts.
+No user manuscripts or author-supplied artwork are included.
+
+The added Chromium EPUB step verifies that the title, selected JPEG cover,
+two chapter pages, and first table-of-contents link actually render.
+This is **not** the same as opening the EPUB file in a dedicated e-reader;
+that manual acceptance gate remains open.
 
 For an optional **single-real-model smoke test** and the manual proof
 procedure, see [Real Model Acceptance](REAL_MODEL_ACCEPTANCE.md).
@@ -96,7 +109,7 @@ new systemd service, startup task, firewall rule, API key or timeout change.
 | DOCX | PASS | Synthetic two-chapter file visually inspected in LibreOffice |
 | EPUB 3 | Structural PASS; **e-reader NOT TESTED** | Correct navigation and Cyrillic text; no actual reader inspection |
 | PDF | PASS, restricted edition | Western-text PDF visually inspected; Cyrillic appropriately refused by basic PDF font |
-| JPEG cover and optional Unicode TrueType PDF in actual browser | **NOT TESTED** | Automated cover/Unicode regression tests passed, but real browser options not exercised |
+| JPEG cover and optional Unicode TrueType PDF in actual browser | **CI browser PASS; installed UI NOT TESTED** | Automated fixture uploads synthetic cover and system font through actual browser controls, checks exports and Poppler glyph extraction; not a claim about the installed test copy |
 | Windows installation and existing-user upgrade/rollback | **NOT TESTED** | Temporary CI copied-source launch is not a Windows installer or production upgrade |
 | Narrow-screen UI | **PASS on updated isolated installation** | Commit 1e45fe6 tested at 390×844: measured sidebar started below header; Home, Story Forge, Editorial navigation clickable; desktop navigation also passed |
 | Saved chapter version menu after acceptance | **PASS on updated isolated installation** | Explicit save from Chapter 01 v3 to v4 immediately updated chapter selector to v4 · 33 words; older chapter hashes unchanged |
@@ -134,10 +147,10 @@ These results are **reported from Cursor on the user's isolated machines**;
 GitHub Actions does not independently execute real model inference. No real
 model is needed to repeat this acceptance gate unless a new defect requires it.
 
-**Outstanding release gates:** actual EPUB reader inspection, browser
-verification of optional cover/font, release-target installation and
-upgrade/rollback where applicable, long-manuscript and accessibility checks,
-and explicit owner approval.
+**Outstanding release gates:** dedicated EPUB reader inspection, optional
+cover/font visual review on an installed user-approved test copy if desired,
+release-target installation and upgrade/rollback where applicable,
+long-manuscript and accessibility checks, and explicit owner approval.
 The development application may still display the prior released
 `1.1.0` version string until versioning is finalized; do not label
 the draft as a released v2.0 build.
