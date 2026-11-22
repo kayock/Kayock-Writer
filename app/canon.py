@@ -68,7 +68,9 @@ class CanonStore:
 
     def propose(self, universe: str, kind: str, subject: str, claim: str,
                 evidence: List[Dict[str, str]], *, chapter: str = "",
-                world_time: str = "", narrative_order: str = "") -> Dict[str, Any]:
+                world_time: str = "", narrative_order: str = "",
+                known_by: List[str] | None = None,
+                learned_time: str = "") -> Dict[str, Any]:
         """Queue a fact for human review; no canon status is granted yet."""
         if kind not in KINDS:
             raise ValueError("Unrecognized canon kind")
@@ -81,12 +83,30 @@ class CanonStore:
             for e in evidence
         ):
             raise ValueError("A source and text excerpt are required for each evidence item")
+        # Knowledge is an explicit statement by the author, never inferred
+        # from who appears in a scene. Empty means unspecified (not everyone).
+        if known_by is None:
+            known_by = []
+        if not isinstance(known_by, list) or len(known_by) > 100 or any(
+                not isinstance(who, str) or not who.strip() or len(who) > 200
+                for who in known_by):
+            raise ValueError("Known-by must be a list of up to 100 named characters.")
+        normalized_known_by = []
+        seen = set()
+        for who in known_by:
+            name = who.strip()
+            if name.casefold() not in seen:
+                normalized_known_by.append(name)
+                seen.add(name.casefold())
+        if not isinstance(learned_time, str) or len(learned_time) > 100:
+            raise ValueError("Learning time must be short text.")
         record = {
             "id": uuid.uuid4().hex,
             "kind": kind, "subject": subject.strip(), "claim": claim.strip(),
             "evidence": [{"source": e["source"].strip(), "quote": e["quote"].strip()} for e in evidence],
             "chapter": str(chapter), "world_time": str(world_time),
             "narrative_order": str(narrative_order),
+            "known_by": normalized_known_by, "learned_time": learned_time.strip(),
             "state": "proposed", "created": now(), "reviewed": None,
         }
         data = self._load(universe)
