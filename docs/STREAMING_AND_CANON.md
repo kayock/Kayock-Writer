@@ -607,6 +607,73 @@ no persistent upload endpoint, no new auth gate, no change to
 configured model endpoints/context sizes/timeouts, and no automatic
 manuscript edits.
 
+## v2.0 initial — author-controlled Editorial Council
+
+A new **Editorial Council** panel is available inside the Finishing
+Desk. It uses the **one configured OpenAI-compatible model endpoint**
+without introducing new agents, providers, persistent services, tool
+permissions, model settings, authentication gates or background jobs.
+
+**Author's explicit workflow:**
+1. Put the exact passage you want reviewed in the existing Finishing
+   Desk. Select **1–3** independent roles from Story Architect,
+   Continuity Editor, Voice Guardian and Line Editor.
+2. Click **Run selected Council reviews** and confirm the number of
+   sequential model calls. Each role receives the full, original
+   passage (up to the existing 80,000-character editorial input limit),
+   the author's instructions and any Story Bible / Voice DNA references
+   that the author explicitly opted into above. Reviewers do not
+   see earlier reviewers' reports or silently influence each other.
+3. Review each complete report separately. A live stream shows which
+   role is active, and the existing generation cancellation route stops
+   the in-flight model request and prevents further role calls. No
+   background execution continues after Stop.
+4. **Optionally** click **Synthesize completed reports**. This requires
+   another confirmation and **one additional model call**. It passes
+   the actual original manuscript and every complete, unabridged
+   report to a synthesis reviewer. The synthesis identifies
+   agreement, disagreement, priorities and questions; it cannot
+   approve canon, save or apply a rewritten draft.
+5. Use any feedback manually. Reports are read-only browser-session
+   data; they are not persisted to manuscript, editorial or project
+   folders. Losing the browser session loses unsaved feedback.
+
+The Council exposes no tools, filesystem or direct writing methods
+to model responses. It may suggest wording, but it does not edit,
+auto-accept, promote, publish or rewrite a manuscript. Partial reports
+are not accepted as complete on model errors/cancellation.
+Nothing truncates full role reports or rewrites the original passage
+to fit a different context; if a synthesis exceeds its explicit
+input limit, it rejects rather than silently compacting. The
+configured model's output-token budget and timeout are reused
+unchanged for **each** requested call. Sequential calls can take
+longer than one review, especially on local models, so the number
+of calls is shown before a run.
+
+**REST API:**
+- GET `/api/writer/council/roles` — read-only role metadata, call
+  limits and model name; no inference or configuration changes.
+- POST `/api/writer/council/stream` with `stage:"reviews"` and
+  `roles:["story_architect","voice_guardian"]` plus the existing
+  Finishing Desk editorial fields. Returns SSE with `start`,
+  `role_start`, `role_token`, `role_done`, and `done` or
+  `cancelled`/`error`. `role_done` includes the complete text
+  of that role's read-only report.
+- POST to the **same** endpoint with `stage:"synthesis"`,
+  the exact original fields and roles, the completed `reports`,
+  and the `source_fingerprint` issued by the reviews.
+  Synthesis is never triggered implicitly. Its reports and input
+  are supplied by the current browser session.
+- POST `/api/generation/<generation_id>/cancel` continues to
+  stop the current stream, including Council roles.
+
+**Scope:** This is an incremental sequential multi-role **review
+workflow**, not yet a distributed model mesh, parallel executor,
+self-writing agent swarm, persistent queue or automatic revision
+manager. Every action requires an explicit author click. Additional
+role-specific endpoint selection and richer approval UIs are future
+work; no assumption is made about local multi-model installations.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -633,6 +700,7 @@ python tests/test_branch_accept.py
 python tests/test_model_capabilities.py
 python tests/test_model_profiles.py
 python tests/test_voice_dna.py
+python tests/test_editorial_council.py
 python tests/test_publishing.py
 python tests/test_book_publishing.py
 python tests/test_cover_unicode_pdf.py
