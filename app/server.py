@@ -46,6 +46,7 @@ class App:
         self.store = Store(cfg.data_dir())
         self.provider = Provider(cfg)
         self._generation_lock = threading.Lock()
+        self._story_draft_lock = threading.RLock()
         self._active_generations = {}
 
         voices.apply_private_voice_pack(cfg.data_dir())
@@ -208,6 +209,11 @@ class App:
         if p is None or not p.is_file():
             raise ValueError('Save or load the universe before editing canon.')
         return p.stem
+
+    def author_draft_action(self, function, *args):
+        """Serialize canonical draft saves with branch acceptance."""
+        with self._story_draft_lock:
+            return function(*args)
 
     def universe_write(self, function, *args):
         """Serialize app HTTP mutations with restore previews and replacement."""
@@ -625,6 +631,18 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(app.draft_branches.compare_source, d.get('project_id'),
                         d.get('book_id'), d.get('branch_id'))
             return
+        if path == '/api/writer/story/branches/preview_accept':
+            self._guard(app.author_draft_action,
+                        app.draft_branches.preview_accept,
+                        d.get('project_id'), d.get('book_id'),
+                        d.get('branch_id'))
+            return
+        if path == '/api/writer/story/branches/accept':
+            self._guard(app.author_draft_action,
+                        app.draft_branches.accept,
+                        d.get('project_id'), d.get('book_id'),
+                        d.get('branch_id'), d.get('confirmation_token'))
+            return
         if path == '/api/writer/story/series_outline/change':
             self._guard(app.series_outline.change, d)
             return
@@ -652,7 +670,12 @@ class Handler(BaseHTTPRequestHandler):
             '/api/writer/story/prose_refresh_compare': app.storyforge.prose_refresh_compare,
         }
         if path in story_routes:
-            self._guard(story_routes[path], d)
+            if path in (
+                    '/api/writer/story/draft_save_action',
+                    '/api/writer/story/draft_continue_action'):
+                self._guard(app.author_draft_action, story_routes[path], d)
+            else:
+                self._guard(story_routes[path], d)
             return
         # Settings
         if path == '/api/writer/editorial/review':
