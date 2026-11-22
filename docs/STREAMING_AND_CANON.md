@@ -553,6 +553,60 @@ font embedding and real Word/e-reader/PDF visual QA remain for later
 release acceptance. The PDF's print layout is not guaranteed to match
 professional typesetting.
 
+## v1.5 — Author-selected cover artwork and optional Unicode PDF font
+
+Full-Book Assembly now supports two strictly optional, author-controlled
+files for a **single publishing request**. Neither file is stored in Writer's
+project, manuscript, Story Bible, voice-profile or settings directories.
+
+**Cover artwork:**
+- Choose a local, licensed **RGB JPEG (.jpg/.jpeg) up to 2 MB** in the book
+  publisher. Writer validates the JPEG image's structure, 8-bit RGB
+  channels, dimensions and pixel count (up to 12 million pixels).
+  PNG, TIFF, SVG and image-URL fetching are not implemented in this pass.
+- The server strips common JPEG EXIF/XMP (APP1), Photoshop (APP13), and
+  comment metadata before embedding; unsupported/proprietary metadata
+  formats may still exist and should be checked before distribution.
+- The selected cover is embedded in DOCX's opening page, EPUB 3's
+  title page with `cover-image` metadata, and PDF's opening page.
+  The preview identifies its dimensions, and its filtered bytes'
+  SHA-256 is bound to the export confirmation. Changing or clearing
+  the cover invalidates an old preview.
+- Cover handling performs **no external calls**, stores no persistent
+  assets, and never modifies existing manuscripts.
+
+**Optional Unicode PDF font:**
+- A PDF export may embed an explicitly selected **TrueType (.ttf) up to
+  3 MB**. No fonts are bundled, downloaded, installed or discovered
+  from the machine by Writer. The file is embedded **only in the
+  downloaded PDF** and is not saved in Writer data. Authors must have
+  permission to embed their selected font.
+- The opt-in renderer uses a TrueType Unicode cmap, embedded
+  `CIDFontType2` and a `ToUnicode` mapping for searchable/extractable
+  text. It supports characters **that the selected font actually
+  contains** without silently replacing missing glyphs.
+- This is **simple left-to-right glyph positioning**. It does not
+  implement Unicode bidirectional reordering, Arabic/Indic shaping,
+  contextual glyph substitution, ligatures, color emoji, vertical
+  writing or automatic font fallback. Complex scripts still require
+  another publishing engine; DOCX/EPUB are safer alternatives.
+- The unchanged default PDF path continues to use standard
+  Windows-1252-compatible PDF fonts and refuses unsupported characters.
+- Both book and individual-passage PDF exports can use the selected
+  font. The book preview token also incorporates the font hash.
+- PDF layout now keeps a cover/title page, reserves chapter title
+  pages, adds continuation headings, avoids certain orphaned lines,
+  and numbers body pages. It is still a **basic** publishing layout
+  requiring visual proofing, not professional press-ready typesetting.
+
+The `book/preview` and `book/export` API inputs now accept optional
+`cover_jpeg_base64` and `pdf_ttf_base64` fields. The single-passage
+`/api/writer/publishing/export` accepts `pdf_ttf_base64` for PDF.
+Both are validated in memory. There is still no new Python dependency,
+no persistent upload endpoint, no new auth gate, no change to
+configured model endpoints/context sizes/timeouts, and no automatic
+manuscript edits.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -581,6 +635,7 @@ python tests/test_model_profiles.py
 python tests/test_voice_dna.py
 python tests/test_publishing.py
 python tests/test_book_publishing.py
+python tests/test_cover_unicode_pdf.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
 python tests/check_ui_js.py
