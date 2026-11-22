@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .storage import Store, contained, jread, jwrite, now, slug
+from .storage import Store, atomic_write_text, contained, jread, jwrite, now, slug
 
 KNOWN_UNIVERSE_KEYS = {
     'universe', 'file_name', 'premise', 'characters', 'locations', 'artifacts',
@@ -112,9 +112,13 @@ class NovelForge:
         for key, value in (old or {}).items():
             if key not in KNOWN_UNIVERSE_KEYS and key not in data:
                 data[key] = value
+        if p.exists():
+            self.store.backup_file(p, kind='universes')
         jwrite(p, data)
         md = self.novel_md_path(name)
-        md.write_text(
+        if md.exists():
+            self.store.backup_file(md, kind='universe_markdown')
+        atomic_write_text(md,
             f"# {name}\n\n"
             f"Modified: {data['modified']}\n\n"
             f"## Premise\n\n{data['premise']}\n\n"
@@ -139,6 +143,9 @@ class NovelForge:
         old = jread(p, {})
         if not new_title:
             new_title = (old.get('universe') or p.stem) + ' Copy'
+        target = self.novel_path(new_title)
+        if target is None or target.exists():
+            return {'ok': False, 'message': 'Duplicate target already exists or has an invalid name.'}
         old['universe'] = new_title
         old['source'] = 'Novel Forge Duplicate'
         return self.save_universe(old)
@@ -155,7 +162,7 @@ class NovelForge:
         old_title = old.get('universe') or p.stem
         old['universe'] = new_title
         result = self.save_universe(old)
-        if result.get('ok'):
+        if result.get('ok') and result.get('name') != p.stem:
             try:
                 p.unlink()
                 md = self.novel_md_path(name)
