@@ -52,16 +52,13 @@ class Cancellation:
             response = self._response
         if response is None:
             return
+        # Shutdown wakes the blocked read without racing HTTPResponse.close()
+        # against readline(). The reader thread owns final response.close().
         try:
-            # A close alone can leave a blocked socket read waiting for more tokens.
             sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
             if sock is not None:
                 sock.shutdown(socket.SHUT_RDWR)
         except (OSError, ValueError, AttributeError):
-            pass
-        try:
-            response.close()
-        except (OSError, ValueError):
             pass
 
 
@@ -294,7 +291,7 @@ class Provider:
                 yield {"type": "done"}
             elif finished and token.cancelled():
                 yield {"type": "cancelled"}
-        except (urllib.error.URLError, OSError, ValueError, UnicodeError) as exc:
+        except (urllib.error.URLError, OSError, ValueError, UnicodeError, AttributeError) as exc:
             if token.cancelled():
                 yield {"type": "cancelled"}
             else:
