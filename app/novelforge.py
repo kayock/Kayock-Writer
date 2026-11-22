@@ -42,7 +42,7 @@ def render_universe_markdown(data: Dict[str, Any]) -> str:
         f"## Timeline\n\n" + "\n".join(f"- {x}" for x in data['timeline']) + "\n\n"
         f"## Mysteries / Unresolved Threads\n\n" + "\n".join(f"- {x}" for x in data['mysteries']) + "\n\n"
         f"## Scenes\n\n" + "\n".join(f"- {x}" for x in data.get('scenes', [])) + "\n\n"
-        f"## Notes\n\n{data['notes']}\n",
+        f"## Notes\n\n{data['notes']}\n"
     )
 
 
