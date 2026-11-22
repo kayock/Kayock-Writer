@@ -31,6 +31,7 @@ jobs:
       - run: python tests/test_context_engine.py
       - run: python tests/test_timeline.py
       - run: python tests/test_relationships.py
+      - run: python tests/test_scene_board.py
       - run: python tests/test_model_capabilities.py
       - run: python tests/test_model_profiles.py
       - run: python tests/test_streaming.py
