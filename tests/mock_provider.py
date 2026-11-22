@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -124,6 +125,32 @@ class MockHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if n else b'{}'
         payload = json.loads(raw.decode('utf-8') or '{}')
         text = _craft_text(payload)
+        if payload.get('stream'):
+            if 'NO_SSE_TEST' in json.dumps(payload):
+                self._json({'error': 'stream not supported'})
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            slow = 'SLOW_STREAM_TEST' in json.dumps(payload)
+            chunks = (['word' + str(i) + ' ' for i in range(100)] if slow
+                      else [text[i:i+18] for i in range(0, len(text), 18)])
+            try:
+                for part in chunks:
+                    event = {'id': 'mock', 'object': 'chat.completion.chunk',
+                             'choices': [{'index': 0, 'delta': {'content': part}, 'finish_reason': None}]}
+                    self.wfile.write(('data: ' + json.dumps(event) + '\\n\\n').encode('utf-8'))
+                    self.wfile.flush()
+                    if slow:
+                        time.sleep(0.04)
+                final = {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]}
+                self.wfile.write(('data: ' + json.dumps(final) + '\\n\\n'
+                                  + 'data: [DONE]\\n\\n').encode('utf-8'))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return
         self._json({
             'id': 'mock', 'object': 'chat.completion',
             'choices': [{'index': 0, 'finish_reason': 'stop',
