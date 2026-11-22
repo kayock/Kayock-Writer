@@ -56,6 +56,7 @@ class UpgradeTests(unittest.TestCase):
         for expected in ('pg-finishing','finishText','cfgCraftUrl','finishingReview()', 'finishingOpenCraft()', 'finishingExport('):
             self.assertIn(expected,html)
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux-only installer test")
 class InstallerTests(unittest.TestCase):
     def test_linux_install_is_preserving_and_repeatable(self):
         import os
