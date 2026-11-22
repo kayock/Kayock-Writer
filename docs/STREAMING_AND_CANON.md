@@ -158,6 +158,15 @@ The associated `GET /api/model/capabilities` endpoint returns the same
 diagnostics. Capability probes and saved routing profiles are separate
 future work; no support is inferred from model names or guessed hardware.
 
+## Novel Forge save protection (v1.2)
+
+Existing universes now receive uniquely named JSON and Markdown backups
+before a subsequent save overwrites them. Universe JSON and Markdown mirrors
+are replaced atomically. Same-filename rename operations retain the live
+universe instead of deleting it, and duplicate operations refuse to overwrite
+an existing universe. These changes use the existing local storage folders;
+they do not alter writing content, create cloud copies, or add requirements.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -171,6 +180,7 @@ Windows/Python 3.12:
 python tests/run_tests.py
 python tests/test_upgrade.py
 python tests/test_foundation.py
+python tests/test_novel_storage_safety.py
 python tests/test_canon_api.py
 python tests/test_context_engine.py
 python tests/test_model_capabilities.py
