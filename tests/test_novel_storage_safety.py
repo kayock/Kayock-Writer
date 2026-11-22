@@ -68,6 +68,35 @@ class NovelSafetyTests(unittest.TestCase):
         saved=self.forge.read_universe("Existing Copy")
         self.assertEqual(saved["premise"],"Do not overwrite")
 
+    def test_damaged_universe_is_never_overwritten_by_save_or_rename(self):
+        original=self.forge.save_universe({"universe":"Damaged","premise":"Before corruption"})
+        self.assertTrue(original["ok"])
+        path=Path(original["path"])
+        path.write_text("{broken manuscript json",encoding="utf-8")
+        before=path.read_bytes()
+        self.assertFalse(self.forge.save_universe({
+            "universe":"Damaged","premise":"This must not replace corruption"
+        })["ok"])
+        self.assertFalse(self.forge.rename_universe({
+            "name":"Damaged","new_title":"Different title"
+        })["ok"])
+        self.assertFalse(self.forge.duplicate_universe({
+            "name":"Damaged","new_title":"Another copy"
+        })["ok"])
+        self.assertFalse(self.forge.read_universe("Damaged")["ok"])
+        self.assertEqual(path.read_bytes(),before)
+        self.assertFalse((Path(self.tmp.name)/"NovelForge"/"Different_title.json").exists())
+
+    def test_direct_rename_refuses_existing_target_without_data_loss(self):
+        self.forge.save_universe({"universe":"First","premise":"Keep first"})
+        self.forge.save_universe({"universe":"Second","premise":"Keep second"})
+        result=self.forge.rename_universe({
+            "name":"First","new_title":"Second"
+        })
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.forge.read_universe("First")["premise"],"Keep first")
+        self.assertEqual(self.forge.read_universe("Second")["premise"],"Keep second")
+
 
 if __name__=="__main__":
     unittest.main(verbosity=2)
