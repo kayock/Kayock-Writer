@@ -413,6 +413,78 @@ merge or a silent overwrite. It does not automatically approve
 canon, revise Story Bible facts, or publish manuscript prose.
 No new authentication requirement or AI provider change is introduced.
 
+## v1.5 — Author-owned Voice DNA and advanced editorial review
+
+The Finishing Desk now includes an optional **Voice DNA** library with
+hand-authored, locally stored style guides. Each guide can describe writing
+traits, expressive choices to preserve, editorial flattening to avoid, and
+up to three short **author-provided** sample excerpts.
+
+- Nothing extracts writing samples automatically. Each profile is created
+  only after an explicit save action. Guides may be created without saving
+  any sample writing.
+- Profiles live under the local data directory at
+  `Projects/KayockWriter/VoiceDNA/profiles.json`. Listing guide names
+  does not expose stored sample excerpts. Inspecting an explicitly selected
+  guide does; deletion retains a local recovery backup.
+- The **Include selected Voice DNA reference** checkbox is off by default.
+  Only an explicitly selected guide is appended as a reference to that
+  individual editorial request (both streaming and classic). If the
+  configured model endpoint is online, the selected guide, including
+  any examples, is sent to that endpoint for that review. The user should
+  not opt into transmitting private samples to an untrusted endpoint.
+- Examples are marked as read-only **style data**, not instructions,
+  generated training data, or passages to imitate. No weights are trained,
+  no hidden fine-tuning occurs, and no source manuscript is changed.
+- Profiles are separate from legacy FOXAI-derived narrator and short
+  fiction profiles: those existing systems and optional private voice packs
+  remain unchanged.
+
+New read-only editorial modes **Developmental** and **Voice Audit** focus
+on structure/pacing and on distinct authorial language respectively.
+The older `review` and `suggestion` modes remain. All modes use the
+existing explicitly configured model with the same timeout, context
+and output-token settings. Reviews never save or automatically apply
+revisions to the author's original writing.
+
+API:
+- GET `/api/writer/voice_dna` lists guide names and metadata only.
+- GET `/api/writer/voice_dna/read?id=...` inspects the specified guide.
+- POST `/api/writer/voice_dna/create` with
+  `{"profile":{"name":"...","author":"...","traits":[],"preserve":[],"avoid":[],"samples":[]}}`.
+- POST `/api/writer/voice_dna/delete` with `{"id":"..."}`.
+- Existing `/api/writer/editorial/review` and
+  `/api/writer/editorial/stream` accept optional `use_voice_dna:true`
+  plus a saved `voice_dna_id`. Without the opt-in, no Voice DNA is
+  read into the model prompt.
+
+## v1.5 — Single-document DOCX and EPUB 3 exports
+
+The Finishing Desk now exports to **DOCX** and **EPUB 3** directly from
+the text that the author explicitly places there. The files are made in
+memory by the local Python server and downloaded by the browser; they
+are **not** saved into existing manuscript folders or transmitted to
+an external publishing service.
+
+- DOCX: a basic formatted WordprocessingML package with a title, optional
+  author, and separate paragraphs/stanzas with manual line breaks kept.
+- EPUB 3: an EPUB-compliant ZIP with the required uncompressed `mimetype`
+  first, navigation, package metadata, a single XHTML chapter and CSS.
+- Existing HTML, Markdown and plain-text downloads remain unchanged.
+  Downloaded HTML can be printed to PDF through a browser; this milestone
+  does not yet implement a direct PDF export service.
+- Source text limits (1–80,000 characters), XML character validation,
+  metadata sanitization and escaped document content are enforced.
+  Invalid source is rejected, **not silently truncated**.
+- Export is a single-document handoff, not a full-book assembler with
+  illustrated pages, elaborate typesetting, synchronized tables of
+  contents or automatic pagination.
+
+POST `/api/writer/publishing/export` accepts
+`{"format":"docx","title":"...","author":"...","writing_type":"prose","text":"..."}`
+or `"format":"epub"` and responds with a local attachment. No model
+generation is triggered during export.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -438,6 +510,8 @@ python tests/test_series_outline.py
 python tests/test_branch_accept.py
 python tests/test_model_capabilities.py
 python tests/test_model_profiles.py
+python tests/test_voice_dna.py
+python tests/test_publishing.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
 python tests/check_ui_js.py
