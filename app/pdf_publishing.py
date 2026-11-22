@@ -1,7 +1,7 @@
 """Simple, searchable, paginate-on-write PDF generation (Python stdlib only).
 
-This deliberately conservative PDF edition uses embedded PDF Base-14 Courier
-fonts and Windows-1252 encoding. It REFUSES unsupported characters instead of
+This deliberately conservative PDF edition uses standard PDF Base-14 Courier
+fonts (not embedded) and Windows-1252 encoding. It REFUSES unsupported characters instead of
 silently replacing or transliterating the author's words. DOCX / EPUB preserve
 full XML-supported Unicode and should be used for broader scripts.
 """
@@ -77,8 +77,11 @@ def make_pdf(title: str, author: str, chapters: List[Dict[str, str]]) -> bytes:
         pages[0].append(_text(line, max(LEFT, (PAGE_W - len(line)*size*.6)/2),
                               475-i*26, "F2", size))
     if author:
-        pages[0].append(_text(author, max(LEFT,(PAGE_W-len(author)*12*.6)/2),
-                              390-len(title_lines)*5,"F1",12))
+        for i, line in enumerate(_wrap(author, 68)):
+            pages[0].append(_text(
+                line, max(LEFT, (PAGE_W - len(line) * 11 * .6) / 2),
+                390 - len(title_lines) * 5 - i * 18, "F1", 11
+            ))
 
     for chapter in chapters:
         # Every new chapter starts on a new page, never overwriting the source.
