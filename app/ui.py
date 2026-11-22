@@ -1327,6 +1327,13 @@ async function storyDraftsRefresh(){
     q('storyDraftsInfo').textContent=`${vs.length} version(s) saved for this chapter.`;
     const opts=vs.map(v=>`<option>${esc(v.filename)}</option>`).join('');
     q('storyDraftsLeft').innerHTML=opts;q('storyDraftsRight').innerHTML=opts;
+    const source=q('storyBranchSource');
+    const old=source.value;
+    source.replaceChildren();
+    source.appendChild(new Option('Choose saved chapter version…',''));
+    for(const v of vs)source.appendChild(new Option(v.filename,v.filename));
+    if(vs.some(v=>v.filename===old))source.value=old;
+
   }
   const h=await api(`/api/writer/story/draft_version_history?project_id=${encodeURIComponent(q('storyDraftsProject').value)}&book_id=${encodeURIComponent(q('storyDraftsBook').value)}&chapter=${encodeURIComponent(q('storyDraftsChapter').value)}`);
   if(h&&h.ok){
@@ -1336,6 +1343,7 @@ async function storyDraftsRefresh(){
         </table></div>`
       :'<div class="status">No draft versions yet.</div>';
   }
+  await storyBranchRefresh();
 }
 async function storyDraftsSave(stage){
   const payload={project_id:q('storyDraftsProject').value,book_id:q('storyDraftsBook').value,
@@ -1355,6 +1363,126 @@ async function storyDraftsContinue(stage){
     base_version:d.base_version},null,2):(d.message||'Failed.');
   q('storyDraftsStatus').className='status '+(d.ok?'ok':'err');
   if(stage==='action'&&d.ok)storyDraftsRefresh();
+}
+/* ==================== isolated chapter draft branches ==================== */
+const storyBranchState={id:null,revision:null,loadedText:'',busy:false};
+async function storyBranchRefresh(){
+  const project=q('storyDraftsProject').value;
+  const book=q('storyDraftsBook').value;
+  const chapter=q('storyDraftsChapter').value;
+  const r=await api('/api/writer/story/branches?project_id='+encodeURIComponent(project)+
+    '&book_id='+encodeURIComponent(book)+'&chapter='+encodeURIComponent(chapter));
+  const select=q('storyBranchSelect');
+  const previous=select.value;
+  select.replaceChildren();
+  select.appendChild(new Option('Select an alternative…',''));
+  if(!r.ok){
+    q('storyBranchStatus').textContent=r.message||'Alternatives unavailable.';
+    storyBranchState.id=null;storyBranchState.revision=null;
+    return;
+  }
+  for(const b of r.branches||[]){
+    select.appendChild(new Option(b.name+' · '+b.versions+' version(s) · '+b.chapter,b.id));
+  }
+  if((r.branches||[]).some(b=>b.id===previous))select.value=previous;
+  q('storyBranchInfo').textContent=(r.branches||[]).length+
+    ' saved alternative(s) for this chapter. Existing draft version history is separate.'+
+    (r.damaged_branches?' '+r.damaged_branches+' damaged branch(es) ignored.':'');
+  if(storyBranchState.id && !(r.branches||[]).some(b=>b.id===storyBranchState.id)){
+    storyBranchState.id=null;storyBranchState.revision=null;
+  }
+}
+function storyBranchPayload(){
+  return {project_id:q('storyDraftsProject').value,book_id:q('storyDraftsBook').value};
+}
+function storyBranchWouldReplaceUnsaved(){
+  const current=q('storyBranchText').value;
+  return current && current!==storyBranchState.loadedText &&
+    !confirm('Discard the unsaved alternative text in the branch editor? It is not saved elsewhere.');
+}
+async function storyBranchCreate(){
+  if(storyBranchState.busy||storyBranchWouldReplaceUnsaved())return;
+  const filename=q('storyBranchSource').value;
+  const name=q('storyBranchName').value.trim();
+  if(!filename||!name){
+    q('storyBranchStatus').textContent='Choose a saved chapter version and name the new branch.';
+    return;
+  }
+  if(!confirm('Create a separate alternative from '+filename+'? The original draft remains unchanged.'))return;
+  storyBranchState.busy=true;
+  const result=await api('/api/writer/story/branches/create',{
+    ...storyBranchPayload(),filename,name
+  });
+  storyBranchState.busy=false;
+  q('storyBranchStatus').textContent=result.message||'Could not create alternative.';
+  q('storyBranchStatus').className='status '+(result.ok?'ok':'err');
+  if(result.ok){
+    q('storyBranchName').value='';
+    await storyBranchRefresh();
+    q('storyBranchSelect').value=result.branch_id;
+    await storyBranchLoad(true);
+  }
+}
+async function storyBranchLoad(skipPrompt=false){
+  if(!skipPrompt&&storyBranchWouldReplaceUnsaved())return;
+  const branch_id=q('storyBranchSelect').value;
+  if(!branch_id){
+    q('storyBranchStatus').textContent='Choose an alternative first.';
+    return;
+  }
+  const result=await api('/api/writer/story/branches/read',{
+    ...storyBranchPayload(),branch_id
+  });
+  if(!result.ok){
+    q('storyBranchStatus').textContent=result.message||'Could not load alternative.';
+    return;
+  }
+  storyBranchState.id=branch_id;
+  storyBranchState.revision=result.revision;
+  storyBranchState.loadedText=result.content;
+  q('storyBranchText').value=result.content;
+  q('storyBranchStatus').textContent='Loaded branch: '+result.manifest.name+
+    ' · version '+result.manifest.versions.length+
+    '. This editor is separate from the main chapter draft.';
+  q('storyBranchStatus').className='status ok';
+}
+async function storyBranchSave(){
+  if(storyBranchState.busy)return;
+  if(!storyBranchState.id||storyBranchState.id!==q('storyBranchSelect').value||
+     !storyBranchState.revision){
+    q('storyBranchStatus').textContent='Load a branch before saving another version.';
+    return;
+  }
+  if(!confirm('Save a new version in this alternative branch? The canonical chapter draft will not change.'))return;
+  storyBranchState.busy=true;
+  const content=q('storyBranchText').value;
+  const result=await api('/api/writer/story/branches/append',{
+    ...storyBranchPayload(),
+    branch_id:storyBranchState.id,
+    content,expected_revision:storyBranchState.revision
+  });
+  storyBranchState.busy=false;
+  q('storyBranchStatus').textContent=result.message||'Alternative was not saved.';
+  q('storyBranchStatus').className='status '+(result.ok?'ok':'err');
+  if(result.ok){
+    storyBranchState.revision=result.revision;
+    storyBranchState.loadedText=content;
+    await storyBranchRefresh();
+    q('storyBranchSelect').value=storyBranchState.id;
+  }
+}
+async function storyBranchCompare(){
+  const branch_id=q('storyBranchSelect').value;
+  if(!branch_id){q('storyBranchCompare').textContent='Choose an alternative to compare.';return;}
+  const result=await api('/api/writer/story/branches/compare',{
+    ...storyBranchPayload(),branch_id
+  });
+  q('storyBranchCompare').textContent=result.ok
+    ?('Original: '+result.source_words+' words · Alternative: '+result.branch_words+
+      ' words. Different: '+result.different+
+      (result.truncated?' · Preview limited to 400 diff lines':'')+
+      '\n\n'+result.diff_preview.join('\n'))
+    :(result.message||'Comparison unavailable.');
 }
 async function storyDraftsCompare(){
   const d=await api('/api/writer/story/draft_compare',{project_id:q('storyDraftsProject').value,
@@ -2305,6 +2433,26 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div class="fixed"><button class="btn" onclick="storyDraftsCompare()">Compare</button></div>
     </div>
     <div id="storyDraftsCompare" class="status">Diff metrics and a unified-diff preview appear here.</div>
+  </div>
+  <div class="card wide"><h3>Alternative Draft Branches</h3>
+    <p class="small">Fork a saved chapter version into an independent alternative. Each branch accumulates its own immutable versions. Nothing merges into or replaces the main draft automatically.</p>
+    <div class="row">
+      <div><label>Fork from saved version</label><select id="storyBranchSource"><option value="">Choose a saved chapter version…</option></select></div>
+      <div><label>Alternative name</label><input id="storyBranchName" type="text" maxlength="100" placeholder="An alternate ending"></div>
+      <div class="fixed"><button class="btn" onclick="storyBranchCreate()">Create alternative</button></div>
+    </div>
+    <div class="row">
+      <div><label>Saved alternatives for this chapter</label><select id="storyBranchSelect"><option value="">Select an alternative…</option></select></div>
+      <div class="fixed"><button class="btn" onclick="storyBranchLoad()">Load alternative</button>
+        <button class="btn" onclick="storyBranchRefresh()">Refresh alternatives</button></div>
+    </div>
+    <div id="storyBranchInfo" class="small">Choose a project, book, and chapter.</div>
+    <label>Alternative draft editor — independent, unsaved until explicitly saved</label>
+    <textarea id="storyBranchText" class="big" placeholder="Load an alternative to edit it here. Main drafts stay unchanged."></textarea>
+    <div class="row"><button class="btn primary" onclick="storyBranchSave()">Save new alternative version</button>
+      <button class="btn" onclick="storyBranchCompare()">Compare saved alternative with source</button></div>
+    <div id="storyBranchStatus" class="status">No branch selected; no changes to canonical drafts.</div>
+    <pre id="storyBranchCompare" class="status" style="white-space:pre-wrap;max-height:330px;overflow:auto">Diff preview is read-only.</pre>
   </div>
 </section>
 
