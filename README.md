@@ -38,6 +38,16 @@ one separately confirmed synthesis. No reviewer automatically starts
 another project, changes canon, edits a manuscript, or saves a draft.
 Each chosen role makes a full model call; synthesis makes one more.
 
+**Per-role model assignments and manual decisions (v2.0 preview):**
+Authors can choose a saved Writer Model Profile independently for
+each Council reviewer and for synthesis. Model choices are scoped to
+that run and never change the active model; credentials for the
+active endpoint are not sent to a different endpoint. The separate
+Author Decision Board lets the writer highlight individual reviewer
+recommendations, mark them Approved for consideration, Rejected,
+Deferred or Pending, and explicitly download a JSON record. These
+decisions do **not** apply any manuscript edits.
+
 **New publishing workflow under development:** Open
 **Editorial & Craft Handoff → Full-Book Assembly & Publishing**,
 choose a Story Forge project and book, select the exact saved
