@@ -228,6 +228,56 @@ an evidence-linked heuristic, not a complete causality engine or a claim
 that an unrecorded character transition never occurred. Narrative display
 order is retained separately; no timeline is automatically edited.
 
+## Saved local model presets (v1.2)
+
+Settings now contains **Saved Model Profiles**, an optional local preset
+library. A preset includes the six existing endpoint fields: base URL, chat
+path, health path, health kind, model name and timeout. Names are author
+chosen; new names must be unique.
+
+- **Save form as new preset** writes the six fields to
+  `Projects/KayockWriter/ModelProfiles/profiles.json`.
+- **Load preset into form** fills the Settings editor but does **not** change
+  the active model, connect to the endpoint, run inference or save config.
+- The author must **review and explicitly use the existing Save endpoint
+  settings button** to change the active endpoint.
+- **Delete preset** needs confirmation, retains a backup of the prior preset
+  library and does not touch active settings.
+- Credentials and API keys are never stored or returned by the profile
+  library. Saved presets cannot hold arbitrary secret/config fields.
+- Existing model context limits, endpoint timeouts, output token budgets,
+  activation behavior and environment overrides are not automatically
+  changed. This feature does not implement hidden model routing or preload
+  models.
+
+The APIs are GET `/api/model/profiles`, POST
+`/api/model/profiles/save` with `{"name":"...","settings":{...}}`, and
+POST `/api/model/profiles/delete` with `{"profile_id":"..."}`.
+Damaged profile libraries are refused rather than overwritten.
+
+## Relationship Explorer — initial visual studio slice (v1.4)
+
+Novel Forge now contains an optional SVG **Relationship Explorer**, showing
+approved story connections as an interactive node-and-edge map. Click a node
+to focus that entity; use **Show all** to reset. Under the graph, each link
+displays its original author-approved claim, evidence source, fictional-world
+time, and narrative order.
+
+A relationship proposal can now explicitly name `related_to` (the target
+entity) and `relation_type` (e.g. sibling, rival, ally), along with its
+existing author-supplied evidence and approval workflow. These two new
+optional fields are used only for the `relationship` kind and must be
+supplied together. Legacy claims without explicit endpoints remain intact
+but are **not** guessed into graph edges. Only approved structured facts
+are graphed. The visualization is deterministic, local and needs no model
+calls, browser build tooling or additional Python libraries.
+
+POST `/api/novelforge/canon/relationships` accepts the saved `universe`,
+optional `focus` and `max_edges` (1–250, default 150). Large graphs are
+explicitly truncated; proposed/rejected facts never appear. This is the
+first relationship visualization, not the complete v1.4 corkboard, scene
+graph, or branching-manuscript system.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -246,7 +296,9 @@ python tests/test_recovery.py
 python tests/test_canon_api.py
 python tests/test_context_engine.py
 python tests/test_timeline.py
+python tests/test_relationships.py
 python tests/test_model_capabilities.py
+python tests/test_model_profiles.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
 python tests/check_ui_js.py
