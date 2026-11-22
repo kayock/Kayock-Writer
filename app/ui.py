@@ -2628,13 +2628,16 @@ async function revisionLoad(){
   if(revisionState.project&&q('revisionCandidate').value!==revisionState.original &&
       !confirm('Discard your unsaved candidate text and load a saved chapter?'))return;
   revisionInvalidate();
+  const originalCandidateBeforeRequest=q('revisionCandidate').value;
   const r=await api('/api/writer/revision/load',{
     project_id:project,book_id:book,chapter
   });
   if(!r.ok){revisionStatus(r.message||'Could not load saved chapter.','err');return;}
   if(project!==q('revisionProject').value||book!==q('revisionBook').value||
-     chapter!==q('revisionChapter').value){
-    revisionStatus('Selection changed while loading. Load the chapter again.','err');
+     chapter!==q('revisionChapter').value||
+     q('revisionCandidate').value!==originalCandidateBeforeRequest){
+    revisionStatus('The chapter selection or unsaved proposal changed during load. '+
+      'Your current text was preserved; load again when ready.','err');
     return;
   }
   revisionState.project=project;revisionState.book=book;
@@ -2722,7 +2725,18 @@ async function revisionAccept(){
     revisionStatus(result.message||'Revision acceptance failed. Preview again.','err');
     return;
   }
+  const changedDuringSave=(
+    !revisionChoicesCurrent() ||
+    JSON.stringify(revisionRequest())!==JSON.stringify(payload)
+  );
   revisionInvalidate();
+  if(changedDuringSave){
+    revisionStatus('A NEW canonical draft v'+result.canonical_version+
+      ' was saved from your confirmed preview. Your current unsaved '+
+      'proposal or selection changed while saving and was NOT replaced. '+
+      'Reload the saved chapter when ready.','ok');
+    return;
+  }
   revisionStatus('Saved new canonical draft v'+result.canonical_version+
     ' for '+result.chapter+'. Earlier saved versions remain unchanged.','ok');
   revisionState.original=payload.candidate;
@@ -2929,7 +2943,15 @@ async function bookPublishPreview(){
     return;
   }
   q('bookPublishPreviewStatus').textContent='Checking the selected saved versions…';
+  const snapshotKey=bookPublishState.sourceKey;
   const result=await api('/api/writer/publishing/book/preview',payload);
+  if(snapshotKey!==bookPublishState.sourceKey ||
+     JSON.stringify(bookPublishRequest())!==JSON.stringify(payload)){
+    bookPublishInvalidate();
+    q('bookPublishPreviewStatus').textContent=
+      'The selected chapters or book details changed while previewing. Preview again.';
+    return;
+  }
   if(!result.ok){
     q('bookPublishPreviewStatus').textContent=result.message||'Book preview failed.';
     q('bookPublishPreviewStatus').className='status err';
