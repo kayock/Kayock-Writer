@@ -174,13 +174,13 @@ class UnicodeFontTests(unittest.TestCase):
                 output.write_bytes(pdf)
                 extracted=subprocess.run(
                     ["pdftotext", "-enc", "UTF-8", str(output), "-"],
-                    capture_output=True, text=True, timeout=20
+                    capture_output=True, text=True, encoding="utf-8", timeout=20
                 )
                 self.assertEqual(extracted.returncode,0,extracted.stderr)
-                # Some Poppler builds normalize equivalently rendered Greek
-                # Omega into the compatibility-equivalent OHM SIGN (U+2126).
-                # NFKC tests the character's canonical meaning without
-                # accepting missing glyphs, replacement chars or lost words.
+                # Explicit UTF-8 decoding is required on Windows: pdftotext
+                # writes UTF-8, while the platform default may be cp1252.
+                # NFKC also tolerates canonical Unicode presentation variants
+                # without accepting replacement characters or missing text.
                 normalized=unicodedata.normalize("NFKC",extracted.stdout)
                 self.assertIn("Alpha Ω",normalized,
                               [hex(ord(x)) for x in extracted.stdout[:30]])
