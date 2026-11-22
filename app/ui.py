@@ -612,10 +612,15 @@ async function renderCanon(){
       '<span class="chip">'+esc(f.state)+'</span><p>'+esc(f.claim)+'</p>'+
       (f.chapter?'<div class="small">Chapter: '+esc(f.chapter)+'</div>':'')+
       (f.world_time?'<div class="small">World time: '+esc(f.world_time)+'</div>':'')+
+      (f.related_to?'<div class="small">Explicit relationship: '+esc(f.subject)+' → '+esc(f.related_to)+
+        ' ('+esc(f.relation_type||'unspecified')+')</div>':'')+
       ((f.known_by||[]).length?'<div class="small">Explicitly known by: '+esc(f.known_by.join(', '))+
         (f.learned_time?' · learned '+esc(f.learned_time):' · learning time unspecified')+'</div>':'')+
       evidence+action+'</div>';
   }).join('');
+}
+function toggleCanonRelationshipFields(){
+  q('nfCanonRelationshipFields').style.display=q('nfCanonKind').value==='relationship'?'block':'none';
 }
 async function proposeCanonFact(){
   if(!S.novel.active){toast('Save or load a universe before proposing canon.','err');return;}
@@ -627,12 +632,15 @@ async function proposeCanonFact(){
     narrative_order:q('nfCanonNarrative').value,
     known_by:q('nfCanonKnownBy').value.split(',').map(x=>x.trim()).filter(Boolean),
     learned_time:q('nfCanonLearnedTime').value,
+    related_to:q('nfCanonKind').value==='relationship'?q('nfCanonRelatedTo').value:'',
+    relation_type:q('nfCanonKind').value==='relationship'?q('nfCanonRelationType').value:'',
   };
   const d=await api('/api/novelforge/canon/propose',payload);
   toast(d.message||(d.ok?'Fact proposed for review.':'Proposal rejected.'),d.ok?'ok':'err');
   if(d.ok){
     ['nfCanonSubject','nfCanonClaim','nfCanonSource','nfCanonQuote',
-     'nfCanonKnownBy','nfCanonLearnedTime'].forEach(id=>q(id).value='');
+     'nfCanonKnownBy','nfCanonLearnedTime',
+     'nfCanonRelatedTo','nfCanonRelationType'].forEach(id=>q(id).value='');
     renderCanon();
   }
 }
@@ -643,6 +651,117 @@ async function reviewCanonFact(factId,decision){
     universe:S.novel.active,fact_id:factId,decision});
   toast(d.message||(d.ok?'Fact '+decision+'.':'Review failed.'),d.ok?'ok':'err');
   if(d.ok)renderCanon();
+}
+function clearRelationshipFocus(){
+  q('nfGraphFocus').value='';
+  renderRelationshipGraph();
+}
+async function renderRelationshipGraph(){
+  const status=q('nfGraphStatus');
+  const target=q('nfGraph');
+  const evidence=q('nfGraphEvidence');
+  target.replaceChildren();
+  evidence.replaceChildren();
+  if(!S.novel.active){
+    status.textContent='Load a saved universe first.';
+    return;
+  }
+  status.textContent='Reading author-approved relationship facts…';
+  const result=await api('/api/novelforge/canon/relationships',{
+    universe:S.novel.active,focus:q('nfGraphFocus').value.trim(),
+    max_edges:150
+  });
+  if(!result.ok){
+    status.textContent=result.message||'Relationship graph unavailable.';
+    return;
+  }
+  status.textContent=result.edge_count+' approved link(s) drawn. '+
+    result.unstructured_approved_relationships+
+    ' older relationship claim(s) have no explicit endpoints and were not guessed.'+
+    (result.truncated?' Showing first 150 matching edges.':'');
+  if(!(result.nodes||[]).length){
+    evidence.textContent='No approved, explicitly linked relationships match. Propose a relationship with source and target, then approve it.';
+    return;
+  }
+  const ns='http://www.w3.org/2000/svg';
+  const mk=(tag,attrs={})=>{
+    const item=document.createElementNS(ns,tag);
+    for(const [k,v] of Object.entries(attrs))item.setAttribute(k,String(v));
+    return item;
+  };
+  const width=860,height=570,cx=width/2,cy=height/2;
+  const nodes=result.nodes;
+  const svg=mk('svg',{viewBox:'0 0 860 570',width:'100%',role:'img',
+    'aria-label':'Approved Story Bible relationship diagram'});
+  svg.style.maxWidth='860px';
+  svg.style.minWidth='420px';
+  svg.style.background='transparent';
+  const positions={};
+  nodes.forEach((node,i)=>{
+    const angle=2*Math.PI*i/nodes.length-Math.PI/2;
+    const distance=nodes.length===1?0:Math.min(225,110+nodes.length*8);
+    positions[node.id]={
+      x:cx+Math.cos(angle)*distance,
+      y:cy+Math.sin(angle)*distance
+    };
+  });
+  for(const edge of result.edges){
+    const a=positions[edge.source],b=positions[edge.target];
+    if(!a||!b)continue;
+    svg.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,
+      stroke:'currentColor','stroke-opacity':'0.38','stroke-width':'2'}));
+    if(result.edges.length<=20){
+      const label=mk('text',{x:(a.x+b.x)/2,y:(a.y+b.y)/2-6,
+        'text-anchor':'middle','font-size':'11',fill:'currentColor'});
+      label.textContent=edge.relation_type;
+      svg.appendChild(label);
+    }
+  }
+  for(const node of nodes){
+    const p=positions[node.id];
+    const group=mk('g',{role:'button',tabindex:'0','aria-label':'Focus '+node.name});
+    const circle=mk('circle',{cx:p.x,cy:p.y,r:21,fill:'#7552bd',
+      stroke:'currentColor','stroke-width':'1.4'});
+    const text=mk('text',{x:p.x,y:p.y+39,'text-anchor':'middle',
+      'font-size':'12',fill:'currentColor'});
+    const title=mk('title');
+    title.textContent=node.name+' ('+node.degree+' connection(s)); click to focus';
+    text.textContent=node.name.length>24?node.name.slice(0,23)+'…':node.name;
+    group.appendChild(title);
+    group.appendChild(circle);
+    group.appendChild(text);
+    const focus=()=>{q('nfGraphFocus').value=node.name;renderRelationshipGraph();};
+    group.addEventListener('click',focus);
+    group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();focus();}});
+    group.style.cursor='pointer';
+    svg.appendChild(group);
+  }
+  target.appendChild(svg);
+  const intro=document.createElement('p');
+  intro.textContent='Evidence for every visible edge:';
+  evidence.appendChild(intro);
+  for(const edge of result.edges){
+    const block=document.createElement('div');
+    block.className='card';
+    const header=document.createElement('strong');
+    header.textContent=edge.source_name+' → '+edge.target_name+' · '+edge.relation_type;
+    block.appendChild(header);
+    const claim=document.createElement('p');
+    claim.textContent=edge.claim;
+    block.appendChild(claim);
+    const citation=document.createElement('div');
+    citation.className='small';
+    citation.textContent='Fact '+edge.fact_id+' · World time: '+(edge.world_time||'not specified')+
+      ' · Narrative order: '+(edge.narrative_order||'not specified');
+    block.appendChild(citation);
+    for(const src of edge.evidence){
+      const el=document.createElement('div');
+      el.className='small';
+      el.textContent='Source: '+src.source+' — “'+src.quote+'”';
+      block.appendChild(el);
+    }
+    evidence.appendChild(block);
+  }
 }
 async function previewCanonContext(){
   const target=q('nfCanonPreview');
@@ -1775,7 +1894,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div id="nfCanonList" class="status">Load or save a universe to review canon.</div>
     <details><summary>Propose a sourced canon fact</summary>
       <div class="row">
-        <div><label>Type</label><select id="nfCanonKind"><option value="character">Character</option><option value="location">Location</option><option value="artifact">Artifact</option><option value="event">Event</option><option value="relationship">Relationship</option><option value="thread">Plot thread</option><option value="rule">World rule</option></select></div>
+        <div><label>Type</label><select id="nfCanonKind" onchange="toggleCanonRelationshipFields()"><option value="character">Character</option><option value="location">Location</option><option value="artifact">Artifact</option><option value="event">Event</option><option value="relationship">Relationship</option><option value="thread">Plot thread</option><option value="rule">World rule</option></select></div>
         <div><label>Subject</label><input id="nfCanonSubject" type="text" placeholder="Character or event name"></div>
       </div>
       <label>Proposed fact</label><textarea id="nfCanonClaim" placeholder="State the specific fact in your own words."></textarea>
@@ -1793,8 +1912,26 @@ _HTML = r"""<!doctype html><html lang="en"><head>
         <div><label>When they learned it (optional)</label><input id="nfCanonLearnedTime" type="text" placeholder="Day 4 or YYYY-MM-DD"></div>
       </div>
       <p class="small">Blank means unspecified, not public knowledge. Learning time is independent of when the world event occurred.</p>
+      <div id="nfCanonRelationshipFields" style="display:none">
+        <div class="row">
+          <div><label>Related character / entity</label><input id="nfCanonRelatedTo" type="text" placeholder="Marcus"></div>
+          <div><label>Relationship type</label><input id="nfCanonRelationType" type="text" placeholder="Sibling, ally, rival, mentor…"></div>
+        </div>
+        <p class="small">Both fields create an explicit relationship link after approval. No connections are inferred from free-form claims.</p>
+      </div>
       <button class="btn primary" onclick="proposeCanonFact()">Submit for review</button>
     </details>
+  </div>
+  <div class="card wide"><h3>Relationship Explorer — approved Story Bible</h3>
+    <p class="small">Interactive character/entity map of explicit, approved relationships only. Click a node to focus its connections. Every link retains the original author-approved claim and source. No model is called.</p>
+    <div class="row">
+      <div><label>Focus entity (optional)</label><input id="nfGraphFocus" type="text" placeholder="Elena"></div>
+      <div class="fixed"><button class="btn primary" onclick="renderRelationshipGraph()">Draw relationships</button>
+        <button class="btn" onclick="clearRelationshipFocus()">Show all</button></div>
+    </div>
+    <div id="nfGraphStatus" class="status">Load a saved universe and draw its approved relationships.</div>
+    <div id="nfGraph" style="width:100%;max-width:900px;overflow:auto"></div>
+    <div id="nfGraphEvidence"></div>
   </div>
   <div class="card wide"><h3>Canon Retrieval &amp; Continuity Workshop</h3>
     <p class="small">Read-only. Searches approved facts with source citations, then checks narrow explicit contradictions in an unsaved passage. It does not rewrite, save or automatically approve anything.</p>
