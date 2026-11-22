@@ -39,7 +39,7 @@ or licensed author-supplied font files are included.
 
 For an optional **single-real-model smoke test** and the manual proof
 procedure, see [Real Model Acceptance](REAL_MODEL_ACCEPTANCE.md).
-It has not been executed against author machines or endpoints.
+A separate, owner-reported single-real-model acceptance was subsequently performed on the isolated Linux test copy; see the dated results below. GitHub CI itself still uses a mock and never calls the author's models.
 
 The browser job runs only on CI; Playwright and Chromium are **development testing tools** and are not part of the installed Kayock Writer runtime. No production configs, actual user writing, private voice profiles, online endpoints or model credentials are loaded. A failed run may upload a screenshot containing only synthetic fixture text.
 
@@ -53,7 +53,7 @@ node tests/browser_release_smoke.cjs
 
 The script starts and stops its **own temporary local fixture server**. Never point it at a real user installation.
 
-## Mandatory human acceptance gates (not yet verified)
+## Mandatory human acceptance gates (partially verified)
 
 For each gate, record a date, Pass / Fail / Not tested, and the actual result. The isolated Linux acceptance findings reported below are **not a production upgrade or release approval**. Unlisted gates remain Not tested. Passing CI alone does not complete these gates.
 
@@ -62,7 +62,7 @@ For each gate, record a date, Pass / Fail / Not tested, and the actual result. T
 | Windows clean install | Starts from release candidate with the chosen data directory |
 | Linux clean install | Runs on documented Python-only runtime and existing local configuration |
 | Existing-user upgrade | Backup, migrations, unchanged original manuscripts, tested rollback |
-| Actual local model | Streaming review works without unreasonable waiting; Stop cancels |
+| Actual local model | **PASS for one live streamed review** (see November 22 report); cancellation was NOT TESTED because review finished normally |
 | Actual online model, only if chosen by author | Explicit consent for any private references, no leaked credentials |
 | Council per-role model mapping | Endpoint/model name/timeout correctly used; offline endpoints fail gracefully |
 | Voice DNA and Story Bible | No private content shared without explicit author opt-in |
@@ -90,7 +90,7 @@ new systemd service, startup task, firewall rule, API key or timeout change.
 | Isolated Linux installation and startup | PASS | Separate development copy returned HTTP 200; no existing installation overwritten |
 | Story Forge, chapter history and recovery | PASS | Synthetic project; original chapter version hashes survived v001/v002/v003; recovery suite passed |
 | Editorial Council UI | PASS, **mock only** | Exactly one selected role; streamed mock response is not evidence of real-model accuracy |
-| Real local model inference | **NOT TESTED** | Selected localhost endpoint refused connections; running Ollama listed no loaded model; no model was started or retried |
+| Real local model inference | **PASS (subsequent real-model check)** | Initial localhost-only check was NOT TESTED. Later one live Story Architect review on Portable Ollama llama3.2:3b streamed successfully, 0.915 s first token, 18.488 s total; no cancellation needed |
 | Controlled revision | PASS | Explicit preview/approval appended v003 while earlier versions remained unchanged |
 | Author Decision Board | PASS | Manual approve-for-consideration exported JSON; no manuscript write |
 | DOCX | PASS | Synthetic two-chapter file visually inspected in LibreOffice |
@@ -98,17 +98,46 @@ new systemd service, startup task, firewall rule, API key or timeout change.
 | PDF | PASS, restricted edition | Western-text PDF visually inspected; Cyrillic appropriately refused by basic PDF font |
 | JPEG cover and optional Unicode TrueType PDF in actual browser | **NOT TESTED** | Automated cover/Unicode regression tests passed, but real browser options not exercised |
 | Windows installation and existing-user upgrade/rollback | **NOT TESTED** | Temporary CI copied-source launch is not a Windows installer or production upgrade |
-| Narrow-screen UI | Issue reported | Appbar blocked navigation clicks until widening the browser; development-branch responsive fix and Chromium regression added, **local retest still pending** |
-| Saved chapter version menu after acceptance | Issue reported | Menu showed v002 after v003 save until refresh; development-branch immediate-label fix and regression added, **local retest still pending** |
+| Narrow-screen UI | **PASS on updated isolated installation** | Commit 1e45fe6 tested at 390×844: measured sidebar started below header; Home, Story Forge, Editorial navigation clickable; desktop navigation also passed |
+| Saved chapter version menu after acceptance | **PASS on updated isolated installation** | Explicit save from Chapter 01 v3 to v4 immediately updated chapter selector to v4 · 33 words; older chapter hashes unchanged |
 
 Local test environment reportedly ran 26 Python test modules (220 tests),
 18 application self-checks and the isolated Chromium fixture successfully.
 Python 3.14.4 emitted ResourceWarnings when handling expected HTTP errors,
-without test failures. No real-model test was performed.
+without test failures. This was the **initial** isolated-acceptance pass;
+the later real-model and UI retest results are documented below.
 
-**Outstanding release gates:** one bounded real-model request, actual EPUB
-reader inspection, browser verification of cover/font, Windows install if
-required for distribution, upgrade/rollback, and explicit owner approval.
+### Real-model Editorial Council acceptance — reported November 22, 2026
+
+The owner shared Cursor's test report for the updated isolated installation
+(commit `1e45fe6`). The test used **Ubuntu Station for Writer** and
+**Ubuntu Portable** (`10.0.0.45`) for inference, via existing Ollama at
+`http://10.0.0.45:11434`, model `llama3.2:3b` (3.2B, Q4_K_M).
+The model was **loaded on demand**, not already resident; no download was made.
+Only one Story Architect reviewer request was executed using the synthetic
+passage about Mira closing the gate at the empty harbor. Story Bible,
+Voice DNA, synthesis, and other reviewers were disabled.
+
+| Evidence | Reported result |
+| --- | --- |
+| Real endpoint and model identification | PASS — Portable Ollama, `llama3.2:3b`; Writer showed `Active: llama3.2:3b` |
+| Actual Editorial Council streaming | PASS — first token in **0.915 seconds** |
+| One completed real-model review | PASS — **18.488 seconds** total; content discussed the harbor, bell, Mira, and gate |
+| External 60-second limit | PASS — finished before limit; cancellation **NOT TESTED** |
+| Number of model generation requests | **1**, no retries |
+| Manuscript and project integrity | PASS — chapter v1–v4, Chapter 02 v1, draft manifest, project file unchanged; 27 data files retained |
+| Test Writer model configuration restored | PASS — original SHA-256 `29ee10e6eb9a8f350c20ddeac9d4121edda946212fbaf94a564ae0189c0afc67`; localhost endpoint, 420s timeout, no key |
+| Portable loaded-model state restored | PASS — Ollama returned an empty loaded-model list after the test |
+| Existing Writer production installation | PASS — port 8768 left unchanged; test copy remains on port 18765 |
+
+These results are **reported from Cursor on the user's isolated machines**;
+GitHub Actions does not independently execute real model inference. No real
+model is needed to repeat this acceptance gate unless a new defect requires it.
+
+**Outstanding release gates:** actual EPUB reader inspection, browser
+verification of optional cover/font, release-target installation and
+upgrade/rollback where applicable, long-manuscript and accessibility checks,
+and explicit owner approval.
 The development application may still display the prior released
 `1.1.0` version string until versioning is finalized; do not label
 the draft as a released v2.0 build.
@@ -119,14 +148,14 @@ the draft as a released v2.0 build.
 - The Council uses a sequential series of per-role model requests. Multiple slow models can create long total runtimes; no model automatically starts.
 - “Approved for consideration” on the Decision Board never changes manuscript files. An additional, explicit author-controlled revision approval is needed to append a version.
 - DOCX/EPUB/PDF tests validate structure and downloads but not professional page layout or reader compatibility. A user-selected Unicode TrueType PDF has only simple left-to-right rendering; complex-script shaping, fallback and color emoji are not supported.
-- Release readiness remains blocked on human acceptance, especially real-model, actual document viewer and **production** installation/rollback tests. Passing disposable installation staging is not a claim that a running installation was upgraded or rolled back.
+- Release readiness remains blocked on remaining human acceptance, particularly actual EPUB reader verification, optional publishing visuals and **production** installation/rollback tests. The reported one-model live Editorial Council acceptance passed; cancellation was not exercised. Passing disposable installation staging is not a claim that a running installation was upgraded or rolled back.
 
 ## Release decision record
 
 - Development PR: https://github.com/kayock/Kayock-Writer/pull/1
 - Exact candidate commit: record after all checks
 - Final Actions run: record after all checks
-- Manual test result: PARTIAL isolated Linux acceptance reported; real model and release gates still open
+- Manual test result: PARTIAL isolated Linux acceptance reported; one real-model Editorial Council review PASS; other release gates still open
 - Owner approval to merge: NOT GIVEN
 - Release decision: HOLD DRAFT
 
