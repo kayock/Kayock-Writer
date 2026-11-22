@@ -125,11 +125,17 @@ summary{cursor:pointer;color:var(--accent3)}
 .cardrow{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
 @media (max-width:900px){
   #burger{display:inline-block}
-  nav#tree{position:fixed;left:0;top:58px;bottom:0;z-index:40;transform:translateX(-105%);
-    transition:transform .18s ease;box-shadow:var(--shadow)}
+  nav#tree{position:fixed;left:0;top:var(--appbar-height, 58px);bottom:0;z-index:40;
+    transform:translateX(-105%);transition:transform .18s ease;
+    box-shadow:var(--shadow);overscroll-behavior:contain}
   nav#tree.open{transform:translateX(0)}
-  #layout{min-height:calc(100vh - 100px)}
-  main{padding:14px}
+  #layout{min-height:calc(100vh - var(--appbar-height, 58px))}
+  main{padding:14px;min-width:0}
+}
+@media (max-width:600px){
+  #appbar .brand small{display:none}
+  #appbar{gap:8px}
+  #modelLabel{overflow-wrap:anywhere}
 }
 
 .scene-lanes{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;align-items:start}
@@ -184,8 +190,25 @@ function show(page){
   if(renderers[page])renderers[page]();
   window.scrollTo({top:0});
 }
-function openTree(){q('tree').classList.toggle('open');}
-function closeTree(){q('tree').classList.remove('open');}
+function syncNavLayout(){
+  const bar=q('appbar'), tree=q('tree'), burger=q('burger');
+  if(!bar||!tree||!burger)return;
+  // A wrapped mobile header is frequently taller than 58px. Using its
+  // measured height prevents the fixed navigation from covering the bar
+  // or appearing beneath it on narrow screens.
+  document.documentElement.style.setProperty('--appbar-height',bar.offsetHeight+'px');
+  if(window.innerWidth>900)tree.classList.remove('open');
+  burger.setAttribute('aria-expanded',String(tree.classList.contains('open')));
+}
+function openTree(){
+  q('tree').classList.toggle('open');
+  syncNavLayout();
+  if(q('tree').classList.contains('open'))q('tree').querySelector('button.nav')?.focus();
+}
+function closeTree(){
+  q('tree').classList.remove('open');
+  syncNavLayout();
+}
 
 /* ============================ state ============================ */
 const S={
@@ -2737,6 +2760,15 @@ async function revisionAccept(){
       'Reload the saved chapter when ready.','ok');
     return;
   }
+  // Keep the visible chapter selector synchronized with the version that
+  // the server actually committed. Do not refresh the whole workspace:
+  // that could discard a separate unsaved candidate in another field.
+  const selectedOption=Array.from(q('revisionChapter').options)
+    .find(option=>option.value===payload.chapter);
+  if(selectedOption){
+    selectedOption.textContent=payload.chapter+' · v'+result.canonical_version+
+      ' · '+result.canonical_word_count+' words';
+  }
   revisionStatus('Saved new canonical draft v'+result.canonical_version+
     ' for '+result.chapter+'. Earlier saved versions remain unchanged.','ok');
   revisionState.original=payload.candidate;
@@ -3135,6 +3167,17 @@ async function saveCraftConfig(){
 
 /* ============================ boot ============================ */
 window.addEventListener('DOMContentLoaded',()=>{
+  syncNavLayout();
+  if(window.ResizeObserver){
+    const observer=new ResizeObserver(()=>syncNavLayout());
+    observer.observe(q('appbar'));
+  }
+  window.addEventListener('resize',syncNavLayout);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&q('tree').classList.contains('open')){
+      closeTree();q('burger').focus();
+    }
+  });
   show('home');renderHome();setInterval(async()=>{
     const st=await api('/api/status');const dot=q('modelDot');
     dot.className=(st&&st.model&&st.model.online)?'online':'offline';
@@ -3153,13 +3196,13 @@ _HTML = r"""<!doctype html><html lang="en"><head>
 <style>__CSS__</style>
 </head><body>
 <header id="appbar">
-  <button id="burger" onclick="openTree()">☰ Menu</button>
+  <button id="burger" type="button" onclick="openTree()" aria-controls="tree" aria-expanded="false">☰ Menu</button>
   <span class="brand">Kayock Writer <small>— Novel Forge · Poetry Forge · Short Story Forge</small></span>
   <span style="flex:1"></span>
   <span class="status"><span id="modelDot"></span><span id="modelLabel">checking model…</span></span>
 </header>
 <div id="layout">
-<nav id="tree">
+<nav id="tree" aria-label="Writer sections">
   <button class="nav active" data-page="home" onclick="show('home')">Writer Home</button>
 
   <div class="group">Poetry Forge</div>
