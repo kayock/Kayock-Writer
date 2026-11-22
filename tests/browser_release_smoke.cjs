@@ -171,7 +171,7 @@ async function exercise(page, url) {
   await downloadAndInspect(page, '#bookPublishEpub', 'epub', Buffer.from([0x50, 0x4b]));
   await downloadAndInspect(page, '#bookPublishPdf', 'pdf', Buffer.from('%PDF-'));
   requireText(await page.locator('#bookPublishDownloadStatus').textContent(),
-              'No manuscripts were edited', 'Publishing status');
+              'no manuscripts were edited', 'Publishing status');
   process.stdout.write('OK browser book publishing: verified chapter v2, DOCX EPUB PDF\n');
 
   // Ensure user-entered text remains unchanged throughout review/publishing.
