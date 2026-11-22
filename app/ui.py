@@ -1160,6 +1160,7 @@ async function renderSettings(){
     q('cfgHealthKind').value=m.health_kind||'auto';
     q('cfgTimeout').value=m.timeout_seconds||420;
     q('cfgApiKey').placeholder=m.api_key_set?'API key is set (leave blank to keep)':'API key (optional)';
+    q('cfgApiKey').value='';
     q('cfgCraftUrl').value=(S.config.integrations&&S.config.integrations.craft_suite_url)||'';
     q('cfgServerInfo').innerHTML=`<div class="kv">
       <span class="k">LAN address</span><span>${esc(m.api_key_set?'':'')}${esc(S.config.server.host)}:${S.config.server.port}</span>
@@ -1168,10 +1169,77 @@ async function renderSettings(){
       <span class="k">Approval phrase required</span><span>${S.config.writing&&S.config.writing.require_approval_phrase?'yes':'no'}</span>
     </div>`;
   }
+  await refreshModelProfiles();
   const vs=await api('/api/voice/pack/status');
   q('cfgVoicePack').innerHTML=vs&&vs.loaded
     ?`<span class="chip gold">Private Eric pack active — ${vs.source_count} source poem(s) available as read-only style references.</span>`
     :'<span class="chip">Private Eric pack not installed — the Eric — Poet/Narrator profile uses derived style settings only.</span>';
+}
+let modelProfileList=[];
+async function refreshModelProfiles(){
+  const selected=q('cfgProfileSelect').value;
+  const status=q('cfgProfileStatus');
+  const r=await api('/api/model/profiles');
+  const selector=q('cfgProfileSelect');
+  selector.innerHTML='';
+  selector.appendChild(new Option('Choose a saved preset…',''));
+  if(!r.ok){
+    modelProfileList=[];
+    status.textContent=r.message||'Could not load saved presets.';
+    status.className='status err';
+    return;
+  }
+  modelProfileList=r.profiles||[];
+  for(const p of modelProfileList)selector.appendChild(new Option(p.name,p.id));
+  if(modelProfileList.some(p=>p.id===selected))selector.value=selected;
+  status.textContent=modelProfileList.length+' local preset(s) saved. Presets never change the active model automatically.';
+  status.className='status';
+}
+function modelFormSettings(){
+  return {
+    base_url:q('cfgBaseUrl').value.trim(),
+    model:q('cfgModel').value.trim(),
+    chat_path:q('cfgChatPath').value.trim(),
+    health_path:q('cfgHealthPath').value.trim(),
+    health_kind:q('cfgHealthKind').value,
+    timeout_seconds:Number(q('cfgTimeout').value)
+  };
+}
+async function saveModelProfile(){
+  const name=q('cfgProfileName').value.trim();
+  if(!name){q('cfgProfileStatus').textContent='Name this preset before saving.';return;}
+  const r=await api('/api/model/profiles/save',{name,settings:modelFormSettings()});
+  q('cfgProfileStatus').textContent=r.message||'Preset save failed.';
+  q('cfgProfileStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok){
+    q('cfgProfileName').value='';
+    await refreshModelProfiles();
+    q('cfgProfileSelect').value=r.profile.id;
+  }
+}
+function stageModelProfile(){
+  const p=modelProfileList.find(x=>x.id===q('cfgProfileSelect').value);
+  if(!p){q('cfgProfileStatus').textContent='Choose a saved preset first.';return;}
+  const m=p.settings;
+  q('cfgBaseUrl').value=m.base_url;
+  q('cfgModel').value=m.model;
+  q('cfgChatPath').value=m.chat_path;
+  q('cfgHealthPath').value=m.health_path;
+  q('cfgHealthKind').value=m.health_kind;
+  q('cfgTimeout').value=m.timeout_seconds;
+  // Never replace or reconstruct a credential from a saved profile.
+  q('cfgApiKey').value='';
+  q('cfgProfileStatus').textContent='Preset staged in the form only. The active model is unchanged. Review endpoint and API key, then use the existing Save endpoint settings button if you want to apply it.';
+  q('cfgProfileStatus').className='status';
+}
+async function deleteModelProfile(){
+  const p=modelProfileList.find(x=>x.id===q('cfgProfileSelect').value);
+  if(!p){q('cfgProfileStatus').textContent='Select a preset to delete.';return;}
+  if(!confirm('Delete saved model preset "'+p.name+'"? Your active model will not change.'))return;
+  const r=await api('/api/model/profiles/delete',{profile_id:p.id});
+  q('cfgProfileStatus').textContent=r.message||'Could not delete preset.';
+  q('cfgProfileStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok)refreshModelProfiles();
 }
 async function saveModelConfig(){
   const payload={base_url:q('cfgBaseUrl').value,model:q('cfgModel').value,
@@ -2005,6 +2073,19 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     </div>
     <div id="cfgTestStatus" class="status">The test lists reachable endpoints and probes one chat completion.</div>
     <div id="cfgCapabilitiesStatus" class="status">Capability inspection is optional and read-only. Missing metadata will be shown as unknown, not unsupported.</div>
+  </div>
+  <div class="card wide"><h3>Saved Model Profiles (optional)</h3>
+    <p class="small">Keep multiple local endpoint/model presets without starting them or changing your active model. Profiles do not store API keys, context sizes, or new timeout defaults. To activate one, first stage its fields, review the credentials and settings, then use the existing Save endpoint settings button above.</p>
+    <div class="row">
+      <div><label>Preset name</label><input id="cfgProfileName" type="text" placeholder="e.g. Writing model — Portable"></div>
+      <div class="fixed"><button class="btn" onclick="saveModelProfile()">Save form as new preset</button></div>
+    </div>
+    <div class="row">
+      <div><label>Saved presets</label><select id="cfgProfileSelect"><option value="">Choose a saved preset…</option></select></div>
+      <div class="fixed"><button class="btn primary" onclick="stageModelProfile()">Load preset into form (not active)</button>
+        <button class="btn" onclick="deleteModelProfile()">Delete preset</button></div>
+    </div>
+    <div id="cfgProfileStatus" class="status">Presets are local and never activate a model automatically.</div>
   </div>
   <div class="card wide"><h3>Optional Craft Suite browser handoff</h3>
     <p class="small">Enter the LAN address of your Craft Suite homepage. This only opens the site in a separate tab; export/import remains manual until its APIs are verified.</p>
