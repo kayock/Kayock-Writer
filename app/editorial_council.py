@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 from typing import Any, Dict, Iterator, List, Tuple
 
 from .editorial import prepare_editorial
+from .config import Config
+from .provider import Provider
 
 ROLES = {
     "story_architect": {
@@ -60,6 +63,75 @@ MAX_REPORT_CHARS = 120_000
 MAX_TOTAL_REPORT_CHARS = 240_000
 
 
+def _validated_model_selection(payload: Dict[str, Any], roles: List[str]) -> Dict[str, str]:
+    """Only saved preset IDs may override role models; no arbitrary URLs/keys."""
+    selected = payload.get("role_profiles", {})
+    if not isinstance(selected, dict) or set(selected) - set(roles):
+        raise ValueError("Role model choices must refer only to selected Council roles.")
+    if any(not isinstance(value, str) or
+           (value and (len(value) != 32 or
+                       any(ch not in "0123456789abcdef" for ch in value)))
+           for value in selected.values()):
+        raise ValueError("Each reviewer needs the active model or a saved profile ID.")
+    synthesis = payload.get("synthesis_profile_id", "")
+    if (not isinstance(synthesis, str) or
+            (synthesis and (len(synthesis) != 32 or
+                            any(ch not in "0123456789abcdef" for ch in synthesis)))):
+        raise ValueError("Choose the active model or a saved synthesis profile.")
+    return {**{role: selected.get(role, "") for role in roles},
+            "synthesis": synthesis}
+
+
+class CouncilScopedConfig(Config):
+    """Ephemeral provider settings; never forward an API key to another base URL."""
+
+    def __init__(self, metadata: Dict[str, Any], original: Config, same_endpoint: bool):
+        # Saved model profiles cannot contain credentials. Do not copy the
+        # active API key into this endpoint-specific temporary configuration.
+        super().__init__({"model": {**metadata, "api_key": ""}}, path=original.path)
+        self._credential_owner = original if same_endpoint else None
+
+    def api_key(self) -> str:
+        return self._credential_owner.api_key() if self._credential_owner else ""
+
+
+def resolve_council_models(plan: Dict[str, Any], active: Provider,
+                           model_profiles: Any) -> Tuple[Dict[str, Provider], Dict[str, str]]:
+    """Resolve all explicit role choices *before* sending any upstream request.
+
+    Reuses saved, inert model profiles and their own recorded timeouts.
+    No active settings changes, model starts or credential forwarding across
+    endpoints. A saved profile that requires different credentials will fail
+    normally rather than borrowing the active endpoint's secret.
+    """
+    selections = plan["model_selection"]
+    requested = {value for value in selections.values() if value}
+    saved = {}
+    if requested:
+        available = model_profiles.list()["profiles"]
+        saved = {item["id"]: item for item in available if item["id"] in requested}
+        if requested - set(saved):
+            raise ValueError("A selected Council model profile is missing. Refresh your model list.")
+    models, labels = {}, {}
+    for work in plan["work"]:
+        role = work["role"]
+        selected = selections[role]
+        if not selected:
+            models[role] = active
+            labels[role] = "Active: " + active.display_model()
+            continue
+        profile = saved[selected]
+        settings = profile["settings"]
+        scoped = CouncilScopedConfig(
+            settings, active.cfg,
+            same_endpoint=(settings["base_url"].rstrip("/") == active.base_url())
+        )
+        models[role] = Provider(scoped)
+        labels[role] = profile["name"] + " · " + settings["model"]
+    return models, labels
+
+
+
 def _fingerprint(payload: Dict[str, Any], roles: List[str]) -> str:
     data = {
         "text": payload.get("text", ""),
@@ -67,6 +139,7 @@ def _fingerprint(payload: Dict[str, Any], roles: List[str]) -> str:
         "writing_type": payload.get("writing_type", "prose"),
         "direction": payload.get("direction", ""),
         "roles": roles,
+        "model_selection": _validated_model_selection(payload, roles),
         "use_canon": payload.get("use_canon") is True,
         "universe": payload.get("universe", "") if payload.get("use_canon") is True else "",
         "canon_limit": payload.get("canon_limit", 12) if payload.get("use_canon") is True else "",
@@ -91,6 +164,7 @@ def prepare_council(payload: Dict[str, Any], max_tokens: int,
             or any(not isinstance(r, str) or r not in ROLES for r in roles)
             or len(roles) != len(set(roles))):
         raise ValueError("Choose 1–3 distinct Council roles from the available role list.")
+    selection = _validated_model_selection(payload, roles)
     base = dict(payload)
     base["mode"] = "review"
     prepared = prepare_editorial(
@@ -190,6 +264,7 @@ def prepare_council(payload: Dict[str, Any], max_tokens: int,
         "stage": stage,
         "roles": roles,
         "work": work,
+        "model_selection": selection,
         "source_fingerprint": _fingerprint(payload, roles),
         "max_tokens": prepared["max_tokens"],
         "temperature": prepared["temperature"],
@@ -200,7 +275,8 @@ def prepare_council(payload: Dict[str, Any], max_tokens: int,
 
 
 def council_events(provider: Any, plan: Dict[str, Any],
-                   cancellation: Any) -> Iterator[Tuple[str, Dict[str, Any]]]:
+                   cancellation: Any, role_providers=None,
+                   model_labels=None) -> Iterator[Tuple[str, Dict[str, Any]]]:
     """Yield safe events; stop on cancellation, incomplete stream or error."""
     for item in plan["work"]:
         if cancellation.cancelled():
@@ -208,11 +284,15 @@ def council_events(provider: Any, plan: Dict[str, Any],
                                  "message": "Council stopped; partial notes were not saved."})
             return
         role = item["role"]
-        yield ("role_start", {"role": role, "label": item["label"]})
+        runner = role_providers[role] if role_providers is not None else provider
+        label = (model_labels or {}).get(role, "Active: " + provider.display_model()
+                                       if hasattr(provider, "display_model") else "active model")
+        yield ("role_start", {"role": role, "label": item["label"],
+                              "model": label})
         chunks: List[str] = []
         completed = False
         size = 0
-        for event in provider.stream_chat(
+        for event in runner.stream_chat(
             item["messages"], max_tokens=plan["max_tokens"],
             temperature=plan["temperature"], cancellation=cancellation
         ):
@@ -256,6 +336,7 @@ def council_events(provider: Any, plan: Dict[str, Any],
                              "No report was silently accepted."})
             return
         yield ("role_done", {"role": role, "label": item["label"],
+                             "model": label,
                              "text": result, "saved": False, "source_unchanged": True})
     yield ("done", {
         "ok": True, "stage": plan["stage"],
