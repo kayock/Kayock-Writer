@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from . import __version__, APP_NAME, voices
 from .config import Config, save_config
+from .canon import CanonStore
 from .editorial import editorial_review, prepare_editorial
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
@@ -47,6 +48,7 @@ class App:
         )
         self.weaver = Weaver(self.store, self.provider, default_author=cfg.default_author)
         self.novelforge = NovelForge(self.store)
+        self.canon = CanonStore(self.store)
         self.storyforge = StoryForge(
             self.store,
             require_approval_phrase=cfg.require_approval_phrase,
@@ -111,6 +113,33 @@ class App:
     def editorial(self, d: Dict[str, Any]) -> Dict[str, Any]:
         return editorial_review(self.provider, d,
                                 max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000))
+
+    def _existing_universe(self, name: str) -> str:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Choose a saved universe first.')
+        p = self.novelforge.novel_path(name)
+        if p is None or not p.is_file():
+            raise ValueError('Save or load the universe before editing canon.')
+        return p.stem
+
+    def canon_list(self, name: str) -> Dict[str, Any]:
+        return self.canon.list_facts(self._existing_universe(name))
+
+    def canon_propose(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        name = self._existing_universe(d.get('universe', ''))
+        return self.canon.propose(
+            name, str(d.get('kind') or ''), str(d.get('subject') or ''),
+            str(d.get('claim') or ''),
+            [{'source': str(d.get('source') or ''), 'quote': str(d.get('quote') or '')}],
+            chapter=str(d.get('chapter') or ''),
+            world_time=str(d.get('world_time') or ''),
+            narrative_order=str(d.get('narrative_order') or ''),
+        )
+
+    def canon_review(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        name = self._existing_universe(d.get('universe', ''))
+        fact_id = str(d.get('fact_id') or '')
+        return self.canon.review(name, fact_id, str(d.get('decision') or ''))
 
     def register_generation(self, generation_id: str, token: Cancellation) -> None:
         with self._generation_lock:
@@ -296,6 +325,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/novelforge/read':
             self._guard(app.novelforge.read_universe, q1('name'))
             return
+        if path == '/api/novelforge/canon':
+            self._guard(app.canon_list, q1('name'))
+            return
         # Story Forge reads
         if path == '/api/writer/story/overview':
             self._guard(app.storyforge.overview)
@@ -392,6 +424,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/export':
             self._guard(app.novelforge.export_story_bible, d)
+            return
+        if path == '/api/novelforge/canon/propose':
+            self._guard(app.canon_propose, d)
+            return
+        if path == '/api/novelforge/canon/review':
+            self._guard(app.canon_review, d)
             return
         # Story Forge actions
         story_routes = {
