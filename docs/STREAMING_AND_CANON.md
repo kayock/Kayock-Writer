@@ -485,6 +485,74 @@ POST `/api/writer/publishing/export` accepts
 or `"format":"epub"` and responds with a local attachment. No model
 generation is triggered during export.
 
+## v1.5 — Full-book assembler and direct PDF (basic edition)
+
+The **Full-Book Assembly & Publishing** section in the Finishing Desk
+makes a read-only book manuscript from **explicitly selected** saved
+Story Forge chapter draft versions.
+
+1. Choose a saved Story Forge project and one of its existing books.
+2. Review available chapters and select the exact saved version of each.
+   All chapters are initially selected; authors may exclude any chapter
+   and use Up/Down controls to change the reading order.
+3. Enter a book title and optional author name, then click **Preview exact
+   chapter selection**. The preview lists included chapters, versions,
+   word counts, and short opening excerpts.
+4. Click **Download book DOCX / EPUB / PDF**. The server checks that the
+   current project, saved draft history, selected chapter bytes, order,
+   title and author still match the preview. If not, it refuses export
+   and asks for a fresh preview. It never silently switches to a later
+   draft or fills in missing chapters.
+
+The assembler does not copy from unsaved editor content or scan unrelated
+projects. It accepts up to 160 distinct chapters and 800,000 characters
+of verified text per book, without silently truncating longer books.
+A selected chapter must exist in that book's draft manifest and its
+saved prose must match the recorded SHA-256. Missing, corrupted,
+unexpected, or foreign draft files are rejected.
+
+**Available layouts:**
+- **Book DOCX**: title and author page; editable contents listing;
+  chapter headings with page breaks, and paragraphs retaining line breaks.
+  This is not yet an auto-updating Word TOC.
+- **Book EPUB 3**: title page, ordered per-chapter XHTML sections,
+  e-reader navigation list, metadata, and basic readable typography.
+- **Book PDF**: direct local, searchable, page-numbered PDF with a
+  title page and chapters starting on new pages. For portability
+  without any new Python dependencies, this initial PDF renderer uses
+  standard PDF Courier fonts with Windows-1252 characters only.
+  **Unsupported characters (including emoji and non-Western scripts)
+  fail explicitly**. Use EPUB or DOCX for full Unicode; no manuscript
+  glyph is silently replaced.
+
+The existing single-passage Finishing Desk now also offers a basic
+direct PDF download with the same conservative character limits.
+Browser-printable HTML and previous DOCX/EPUB/Markdown/TXT remain.
+
+**API:**
+- GET `/api/writer/publishing/book/options?project_id=...&book_id=...`
+  returns saved chapter versions and latest-version defaults.
+- POST `/api/writer/publishing/book/preview` with `project_id`,
+  `book_id`, `title`, `author`, and ordered `chapters` items
+  (`{"chapter":"...","filename":"..."}`) returns a read-only
+  preview and `confirmation_token`.
+- POST `/api/writer/publishing/book/export` with the identical
+  selections, metadata, confirmation token and `format` (docx,
+  epub or pdf) returns a binary attachment.
+- POST `/api/writer/publishing/export` also accepts `format:pdf`
+  for a single Finishing Desk passage.
+
+All exports are generated in memory and downloaded by the browser.
+**No source drafts, approved manuscript files, project manifests, story
+bibles, or private voice profiles are edited or transmitted to a
+publishing provider**. No model is called to assemble or format books.
+
+This is a conservative textual publishing pass. Fine typography, covers,
+page-break fine tuning, illustrated books, indexed citations, non-Latin
+font embedding and real Word/e-reader/PDF visual QA remain for later
+release acceptance. The PDF's print layout is not guaranteed to match
+professional typesetting.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -512,6 +580,7 @@ python tests/test_model_capabilities.py
 python tests/test_model_profiles.py
 python tests/test_voice_dna.py
 python tests/test_publishing.py
+python tests/test_book_publishing.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
 python tests/check_ui_js.py
