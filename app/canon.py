@@ -36,6 +36,8 @@ class CanonStore:
         path = self._path(universe)
         data = jread(path, None)
         if data is None:
+            if path.exists():
+                raise ValueError("Damaged canon JSON; refusing to overwrite")
             return {"schema": "kayock.writer.canon.v1", "universe": universe, "facts": []}
         if not isinstance(data, dict) or data.get("schema") != "kayock.writer.canon.v1" or not isinstance(data.get("facts"), list):
             raise ValueError("Unsupported or damaged canon data; refusing to overwrite")
