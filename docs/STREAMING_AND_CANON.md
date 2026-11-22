@@ -739,6 +739,84 @@ streaming/cancellation tests still run. Interface controls are
 covered by the browser script syntax check and static HTML
 assertions; hands-on browser acceptance is still required.
 
+## v2.0 — Controlled Revision Workspace with explicit author acceptance
+
+This optional Finishing Desk workspace connects manually chosen editorial
+recommendations to Story Forge's **existing append-only canonical draft history**.
+It does **not** invoke a model, rewrite a passage automatically, or apply
+an Approved-for-consideration Council recommendation without the author.
+
+**Workflow:**
+1. Select a saved Story Forge project and book. Choose an existing saved
+   chapter and click **Load latest saved chapter**. A read-only copy of
+   that **verified latest saved version** appears beside a separate
+   proposed-text area. No unsaved Story Forge editor buffer is read.
+2. Manually edit the proposed revision, choosing which Council ideas
+   (if any) to incorporate. You can explicitly copy the current
+   Finishing Desk passage into the candidate, but no model report
+   or Decision Board suggestion edits it automatically.
+3. Click **Preview precise changes**. Writer compares the entire
+   proposal against the last saved chapter and displays original and
+   proposed word counts, change metrics and a line-oriented unified
+   diff. The **diff display** is bounded to 400 lines, with a clear
+   warning when the *display* is shortened; the underlying candidate
+   is **never** truncated to fit the preview.
+4. Check **I have reviewed this exact candidate**, click
+   **Save approved revision as NEW version**, and confirm the
+   save. The server verifies the candidate, canonical chapter
+   bytes and full version-history hash still match the preview
+   token, then invokes Story Forge's existing draft-save action.
+   It appends a fresh draft version without overwriting previous
+   chapter drafts; manuscript and project files outside that new
+   version are not automatically revised.
+
+**Safety constraints:**
+- Preview and load are read-only. The only new write is explicitly
+  approved, appended canonical draft writing via Story Forge's
+  existing versioned save path.
+- Preview and acceptance share the Story Forge draft-write lock
+  already used by normal draft saves and branch acceptance.
+  Duplicate or stale approvals fail; a changed chapter, different
+  candidate, altered history, or an existing target filename
+  prevents saving over older work.
+- The author must submit the exact candidate that was previewed.
+  Candidates that are blank, over 80,000 characters, or contain
+  NUL/carriage-return characters or leading/trailing whitespace
+  are rejected rather than silently altered by legacy Writer
+  normalization. A leading Markdown heading is also refused for
+  this milestone because Story Forge's older draft reader would
+  otherwise drop it on reload. No candidate is cut off by a browser
+  character limit.
+- This is a **whole-chapter manual revision** workflow. It does not
+  automatically merge prose, extract machine-generated patch hunks,
+  decide whether a change is correct, promote canon or overwrite
+  versions. The approved Council notes are recommendations, never
+  direct write permissions.
+- Source draft history must be intact, the selected saved chapter
+  must still match its recorded SHA-256, and the project/book
+  association must be valid. No automatic repair or substitute
+  "latest" version occurs.
+
+**API:**
+- GET `/api/writer/revision/options?project_id=...&book_id=...`
+  lists saved chapters and latest-version metadata.
+- POST `/api/writer/revision/load` with project, book and chapter
+  returns the entire verified latest saved chapter, read-only.
+- POST `/api/writer/revision/preview` with project, book, chapter
+  and full `candidate` returns a diff and `confirmation_token`.
+- POST `/api/writer/revision/accept` sends the identical fields,
+  `confirmation_token` and `approved:true`, and appends exactly
+  one new canonical version if the source and candidate still match.
+
+**Automated coverage:** `tests/test_revision_workspace.py` checks
+exact source fidelity, nondestructive preview, version history,
+approval refusal, stale source/history/candidate detection, missing
+or corrupted files, unsupported text, 400-line diff-display limit
+without manuscript truncation, filename collisions, HTTP routes,
+browser control wiring and concurrent duplicate-approval safety
+on Linux and Windows. Full browser/manual author acceptance
+remains an explicit release requirement.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -767,6 +845,7 @@ python tests/test_model_profiles.py
 python tests/test_voice_dna.py
 python tests/test_editorial_council.py
 python tests/test_council_model_routing.py
+python tests/test_revision_workspace.py
 python tests/test_publishing.py
 python tests/test_book_publishing.py
 python tests/test_cover_unicode_pdf.py
