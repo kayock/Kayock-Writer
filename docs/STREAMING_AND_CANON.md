@@ -167,6 +167,64 @@ universe instead of deleting it, and duplicate operations refuse to overwrite
 an existing universe. These changes use the existing local storage folders;
 they do not alter writing content, create cloud copies, or add requirements.
 
+## Verified universe backup recovery (v1.2)
+
+Novel Forge now includes a manual **Backup Recovery** panel for an existing,
+saved universe. The author can list prior JSON snapshots, preview their
+premise, date, title and section counts alongside the current version, then
+deliberately confirm restoration. A preview supplies a fingerprint of the
+backup and the current JSON/Markdown; any later change invalidates that
+confirmation. Corrupted backups, path traversal and mismatched universes are
+rejected before any restoration.
+
+A confirmed restore makes a *new* local backup of the current saved JSON and
+Markdown before overwriting. The selected original snapshot is restored
+without dropping unknown extension keys, and the Markdown mirror is rebuilt.
+If the mirror write fails, rollback of the prior content is attempted. No
+background restore, cloud copy, automatic recovery or model calls occur.
+
+This version deliberately restores only **existing Novel Forge universes**;
+a deleted universe or an unrelated Story Forge project is not automatically
+recreated. Older backups larger than the explicit 32 MiB safety preview
+limit need manual recovery. It does not restore the separate approved-canon
+review record (which remains stored independently).
+
+## Time-scoped continuity and explicitly assigned knowledge (v1.3)
+
+Author-approved canon proposals now accept optional `known_by` (a list of
+named characters) and independent `learned_time`. An empty list means
+**unspecified**, not "everyone knows". The world event date and the time
+a character learns about it are **different fields**.
+
+The Novel Forge workshop provides:
+
+- **World chronology**, grouped into separately comparable Day N and
+  YYYY-MM-DD sequences. Unknown or differently formatted times remain
+  unplaced rather than being silently sorted.
+- **Character knowledge**, listing only facts that the author explicitly
+  assigned to that character. When "as of" a world time is supplied, facts
+  learned later are excluded and unknown/incomparable learning times
+  are displayed separately as uncertain.
+- **Continuity at a chosen time**, selecting the latest author-approved
+  state at or before that moment for each comparable character attribute,
+  skipping future or incomparable declarations. Without a time entered,
+  the earlier advisory review remains available.
+
+Read-only endpoints:
+
+- POST `/api/novelforge/canon/chronology` with
+  `{"universe":"Saved_Universe"}`.
+- POST `/api/novelforge/canon/knowledge` with
+  `{"universe":"Saved_Universe","character":"Elena","at_world_time":"Day 7"}`.
+- POST `/api/novelforge/canon/continuity` can include
+  `"world_time":"Day 7"` to select temporal comparison.
+
+Only the literal **Day N** and **YYYY-MM-DD** patterns are comparable in
+this first implementation. They are never compared to each other. This is
+an evidence-linked heuristic, not a complete causality engine or a claim
+that an unrecorded character transition never occurred. Narrative display
+order is retained separately; no timeline is automatically edited.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -181,8 +239,10 @@ python tests/run_tests.py
 python tests/test_upgrade.py
 python tests/test_foundation.py
 python tests/test_novel_storage_safety.py
+python tests/test_recovery.py
 python tests/test_canon_api.py
 python tests/test_context_engine.py
+python tests/test_timeline.py
 python tests/test_model_capabilities.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
