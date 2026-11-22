@@ -14,6 +14,7 @@ import bisect
 import hashlib
 import io
 import struct
+from functools import lru_cache
 from typing import Any, Dict, List
 
 MAX_TTF_BYTES = 3 * 1024 * 1024
@@ -125,6 +126,7 @@ class TrueTypeFont:
             raise ValueError("TrueType font has no supported Unicode cmap (format 4/12).")
         return sorted(options, key=lambda item: item[0], reverse=True)[0][1]
 
+    @lru_cache(maxsize=8192)
     def glyph(self, scalar: int) -> int:
         mode = self._cmap[0]
         if mode == "12":
