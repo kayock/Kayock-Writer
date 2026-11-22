@@ -195,8 +195,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _stream_event(self, event_type: str, payload: Dict[str, Any]) -> None:
         """Write and flush a single SSE event; caller handles disconnected clients."""
-        frame = (f"event: {event_type}\\n"
-                 f"data: {json.dumps(payload, ensure_ascii=False)}\\n\\n")
+        frame = (f"event: {event_type}\n"
+                 f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
         self.wfile.write(frame.encode("utf-8"))
         self.wfile.flush()
 
