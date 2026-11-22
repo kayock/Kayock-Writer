@@ -26,6 +26,8 @@ from .recovery import UniverseRecovery
 from .model_profiles import ModelProfiles
 from .voice_dna import VoiceDNA
 from .publishing import build_export
+from .book_publishing import build_book_export
+from .book_assembly import BookAssembler
 from .relationships import build_graph
 from .timeline import chronology, character_knowledge
 from .poetry import PoetryForge
@@ -69,6 +71,7 @@ class App:
             require_approval_phrase=cfg.require_approval_phrase,
             default_author=cfg.default_author,
         )
+        self.book_assembler = BookAssembler(self.storyforge)
         self.scene_board = SceneBoard(self.store, self.storyforge)
         self.series_outline = self.scene_board.outline
         self.draft_branches = DraftBranches(self.store, self.storyforge)
@@ -477,6 +480,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/writer/voice_dna/read':
             self._guard(app.voice_dna.get, q1('id'))
             return
+        if path == '/api/writer/publishing/book/options':
+            self._guard(app.author_draft_action, app.book_assembler.options,
+                        q1('project_id'), q1('book_id'))
+            return
         # Poetry Forge / archive
         if path == '/api/writer/poetry/archive':
             self._guard(app.poetry.archive)
@@ -555,6 +562,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         app = self.app
 
+        if path == '/api/writer/publishing/book/preview':
+            self._guard(app.author_draft_action, app.book_assembler.preview, d)
+            return
+        if path == '/api/writer/publishing/book/export':
+            try:
+                assembly = app.author_draft_action(
+                    app.book_assembler.verified_book, d
+                )
+                rendered = build_book_export(assembly, d.get('format'))
+                self.send_response(200)
+                self.send_header('Content-Type', rendered['content_type'])
+                self.send_header('Content-Disposition',
+                                 'attachment; filename="' + rendered['filename'] + '"')
+                self.send_header('Content-Length', str(len(rendered['body'])))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                self.wfile.write(rendered['body'])
+            except ValueError as exc:
+                self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if path == '/api/writer/publishing/export':
             try:
                 rendered = build_export(d)
