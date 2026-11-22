@@ -338,6 +338,81 @@ POST endpoints `/api/writer/story/branches/create`,
 retconning, AI drafting in branches, or multi-device conflict reconciliation
 is claimed. Those would require separate review and acceptance.
 
+## Series / Book / Act outline (v1.4 incremental)
+
+Story Forge now offers an optional, author-edited **Series / Book / Act
+Outline** alongside the Visual Scene Corkboard. It reads the project's
+existing saved books but stores its series title, series notes, and named
+acts separately in `<project>/Planning/series_outline.json`.
+
+- Every act belongs to a book that already exists in the Story Forge
+  project manifest. Acts have stable IDs, so renaming or revising their
+  descriptions retains any scene-card reference.
+- Authors explicitly save series details and add/edit acts. There is
+  no act deletion, automated book creation, rearrangement of saved chapters,
+  manuscript rewrite or project-manifest migration.
+- The separate file uses atomic writes, backups and optimistic SHA-256
+  revisions; stale tabs, invalid books, and damaged outlines are rejected.
+  Older Story Forge projects remain readable without a new outline file.
+- The corkboard may assign a scene to an act ID, and reads can show the
+  current act title without migrating older cards.
+
+GET `/api/writer/story/series_outline?project_id=...`;
+POST `/api/writer/story/series_outline/change` with current
+`expected_revision`, a project ID, and one of `details`, `act_add`,
+or `act_edit`. Only deliberate author actions create/update the plan.
+
+This is a series label and book/act plan **within an existing project**,
+not yet a global library that unites several independent projects
+into one series. Such a cross-project registry is future work.
+
+## Verified scene links to saved chapter drafts
+
+Corkboard cards may have optional `draft_filename` and `act_id` fields.
+Selecting a draft links by **saved version reference only**: it must be
+listed in that book's existing Story Forge draft manifest, its file must
+match its recorded SHA-256, and (where the card has a chapter label)
+the saved chapter title must match. A reference never copies prose,
+opens a model, rewrites a draft or changes the canonical chapter.
+Legacy cards without either new field remain readable.
+
+Board reads annotate whether a reference is currently valid; if its
+source is missing or altered, the reference is reported as unresolved
+instead of silently rewriting the manuscript. A scene may be unlinked
+without deleting the saved draft.
+
+## Review-first acceptance of an alternative draft
+
+The Draft Workspace now includes **Preview acceptance and diff** followed
+by a separate **Accept previewed alternative as a new main draft version**
+action. Accepting an alternative uses the original Story Forge
+`draft_save_action` workflow with `execute=True`.
+
+- Preview compares the latest **saved branch version** to the current
+  **saved canonical chapter**. It does not inspect or accept unsaved
+  browser text. It shows the next version number and a limited unified
+  diff, without writing any file.
+- A confirmation fingerprint covers the project/book/branch ID, branch
+  manifest revision, canonical manifest bytes, current draft content,
+  and alternative content. If either side changes after preview,
+  acceptance is refused and the author must preview again.
+- Acceptance is a **new canonical draft version**, never an overwrite
+  or destructive merge. Earlier versions and the alternative branch
+  remain saved. The server serializes ordinary draft saves, draft
+  continuation saves, previews and acceptances through one shared lock.
+- The existing draft-save workflow now also refuses to overwrite an
+  already-existing filename and writes each new draft file atomically.
+
+POST `/api/writer/story/branches/preview_accept` with
+`project_id`, `book_id`, `branch_id`, then POST
+`/api/writer/story/branches/accept` with those same identifiers
+and the returned `confirmation_token`.
+
+**Limits:** This is explicit append-only acceptance, not a three-way
+merge or a silent overwrite. It does not automatically approve
+canon, revise Story Bible facts, or publish manuscript prose.
+No new authentication requirement or AI provider change is introduced.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -359,6 +434,8 @@ python tests/test_timeline.py
 python tests/test_relationships.py
 python tests/test_scene_board.py
 python tests/test_draft_branches.py
+python tests/test_series_outline.py
+python tests/test_branch_accept.py
 python tests/test_model_capabilities.py
 python tests/test_model_profiles.py
 python tests/test_streaming.py
