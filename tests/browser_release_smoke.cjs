@@ -201,7 +201,7 @@ async function exercise(page, url) {
 
   // A revision-save response arriving after further typing must not
   // overwrite the author's newly entered unsaved proposal in the browser.
-  await page.locator('#revisionCandidate').fill(REVISION + '\\nA revised coda.');
+  await page.locator('#revisionCandidate').fill(REVISION + String.fromCharCode(10) + 'A revised coda.');
   await page.getByRole('button', { name: 'Preview precise changes' }).click();
   await waitStatus(page, 'revisionStatus', 'Read the diff');
   await page.locator('#revisionApproval').check();
@@ -215,7 +215,7 @@ async function exercise(page, url) {
   });
   const savePending = page.locator('#revisionApproveButton').click();
   await saveIntercepted;
-  const unsavedNewer = REVISION + '\\nAn unsaved final thought.';
+  const unsavedNewer = REVISION + String.fromCharCode(10) + 'An unsaved final thought.';
   await page.locator('#revisionCandidate').fill(unsavedNewer);
   releaseSave();
   await savePending;
