@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 
 from .storage import contained, slug
 from .cover_art import decode_cover
+from .unicode_pdf import decode_font
 
 MAX_CHAPTERS = 160
 MAX_CHARS = 800_000
@@ -120,6 +121,7 @@ class BookAssembler:
         if not isinstance(author, str) or len(author) > 160:
             raise ValueError("Author must be text up to 160 characters.")
         cover = decode_cover(payload.get("cover_jpeg_base64"))
+        unicode_font = decode_font(payload.get("pdf_ttf_base64"))
         index = self._entries(history)
         used = set()
         chapters: List[Dict[str, Any]] = []
@@ -175,11 +177,13 @@ class BookAssembler:
             "title": title, "author": author,
             "manifest_sha256": _hash(history_raw), "ordered_selections": identity,
             "cover_sha256": cover["sha256"] if cover else "",
+            "pdf_font_sha256": unicode_font["sha256"] if unicode_font else "",
         }, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         token = _hash(canonical)
         return {
             "title": title, "author": author, "writing_type": "novel",
             "chapters": chapters, "token": token, "cover": cover,
+            "pdf_font": unicode_font,
             "project_id": project, "book_id": payload["book_id"],
             "book_title": str(book.get("title") or payload["book_id"]),
         }
@@ -193,6 +197,10 @@ class BookAssembler:
                 "confirmation_token": book["token"],
                 "chapter_count": len(book["chapters"]),
                 "total_words": sum(c["words"] for c in book["chapters"]),
+                "unicode_pdf_font_present": book["pdf_font"] is not None,
+                "unicode_pdf_font_size": (
+                    book["pdf_font"]["size"] if book["pdf_font"] else 0
+                ),
                 "cover_present": book["cover"] is not None,
                 "cover_size": book["cover"]["size"] if book["cover"] else 0,
                 "cover_dimensions": (
