@@ -153,6 +153,8 @@ async function exercise(page, url) {
   assert.equal(await page.locator('#revisionApproveButton').isEnabled(), true);
   await page.locator('#revisionApproveButton').click();
   await waitStatus(page, 'revisionStatus', 'Saved new canonical draft v2');
+  requireText(await page.locator('#revisionChapter option:checked').textContent(),
+              'Chapter One · v2', 'Updated revision chapter dropdown');
   assert.equal(await page.locator('#revisionOriginal').inputValue(), REVISION);
   assert.equal(await page.locator('#revisionApproveButton').isDisabled(), true);
   process.stdout.write('OK browser revision: explicit preview and approval append v2\n');
@@ -232,6 +234,29 @@ async function exercise(page, url) {
                'Late save result discarded the newer unsaved revision');
   await page.unroute('**/api/writer/revision/accept');
   process.stdout.write('OK browser save race: newer unsaved proposal is preserved\n');
+
+  // Real narrow viewport regression: the sticky appbar can wrap to
+  // multiple rows. The fixed navigation must start BELOW its measured
+  // bottom edge, not at an obsolete hardcoded 58px offset. All clicks
+  // remain possible without widening the browser.
+  await page.setViewportSize({width: 390, height: 844});
+  await page.waitForFunction(() =>
+    getComputedStyle(document.getElementById('burger')).display !== 'none');
+  await page.locator('#burger').click();
+  assert.equal(await page.locator('#burger').getAttribute('aria-expanded'), 'true');
+  const geometry=await page.evaluate(() => ({
+    headerBottom: document.getElementById('appbar').getBoundingClientRect().bottom,
+    navTop: document.getElementById('tree').getBoundingClientRect().top
+  }));
+  assert.ok(geometry.navTop >= geometry.headerBottom-2,
+    'Mobile navigation overlaps sticky top bar: '+JSON.stringify(geometry));
+  await page.locator('nav#tree button[data-page="home"]').click();
+  assert.equal(await page.locator('#burger').getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.locator('#pg-home').evaluate(el=>el.classList.contains('active')), true);
+  await page.locator('#burger').click();
+  await page.locator('nav#tree button[data-page="finishing"]').click();
+  assert.equal(await page.locator('#pg-finishing').evaluate(el=>el.classList.contains('active')), true);
+  process.stdout.write('OK mobile navigation: 390px, wrapped header and clickable sidebar\\n');
 
   // Ensure user-entered text remains unchanged throughout review/publishing.
   assert.equal(await page.locator('#finishText').inputValue(), ORIGINAL);
