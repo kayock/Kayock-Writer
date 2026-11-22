@@ -217,6 +217,7 @@ class RevisionWorkspace:
         return {
             "ok": True, "accepted": True,
             "chapter": state["chapter"], "canonical_version": result["version"],
+            "canonical_word_count": word_count(candidate),
             "canonical_path": result["path"],
             "source_filename": state["entry"]["filename"],
             "source_version": state["entry"]["version"],
