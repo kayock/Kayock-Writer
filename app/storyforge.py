@@ -39,7 +39,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .storage import Store, contained, jread, jwrite, now, slug
+from .storage import Store, atomic_write_text, contained, jread, jwrite, now, slug
 
 PROJECT_SCHEMA = "kayock.writer.project.v1"
 PREVIEW_SET_SCHEMA = "kayock.writer.chapter_preview_set.v1"
@@ -1050,6 +1050,8 @@ This project was created through the Story Forge approval gate.
         ch_slug = slug(chapter).lower()[:40] or 'chapter'
         filename = f'chapter_{ch_slug}_draft_v{version:03d}.md'
         path = drafts / filename
+        if path.exists():
+            return {'ok': False, 'message': 'Draft version filename already exists. Refusing to overwrite saved writing.'}
         header = (
             f"---\n"
             f"project: {json.dumps(gate['project_id'])}\n"
@@ -1062,7 +1064,7 @@ This project was created through the Story Forge approval gate.
             f"model: {json.dumps(_text(d2.get('model'), 180), ensure_ascii=False)}\n"
             f"---\n\n"
         )
-        path.write_text(header + content.rstrip() + '\n', encoding='utf-8')
+        atomic_write_text(path, header + content.rstrip() + '\n')
         manifest_data = self._load_draft_manifest(gate['project_id'], book_id)
         manifest_data['versions'] = manifest_data.get('versions') or []
         manifest_data['versions'].append({
