@@ -2194,6 +2194,10 @@ function councilDecisionCapture(role,field){
   councilAddDecision(role,chosen);
 }
 function councilAddDecision(role,quote){
+  if(!councilState.baseline||!councilState.sourceFingerprint){
+    councilDecisionStatus('Complete a Council review first, then collect suggestions.','err');
+    return;
+  }
   if(!quote||quote.length>1500||councilDecisions.items.length>=100){
     councilDecisionStatus('Select 1–1,500 characters; the board accepts up to 100 decisions.','err');
     return;
