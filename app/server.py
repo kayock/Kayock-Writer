@@ -17,6 +17,8 @@ from typing import Any, Dict, Optional, Tuple
 from . import __version__, APP_NAME, voices
 from .config import Config, save_config
 from .canon import CanonStore
+from .context import preview as preview_canon
+from .continuity import check as check_continuity
 from .editorial import editorial_review, prepare_editorial
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
@@ -110,9 +112,53 @@ class App:
         return {'ok': True, 'message': 'Optional Craft Suite link saved. No connection was made.',
                 'craft_suite_url': url}
 
+    def editorial_canon_context(self, d: Dict[str, Any]) -> str:
+        """Only an explicit opt-in adds approved story facts to model prompts."""
+        if d.get('use_canon') is not True:
+            return ''
+        universe = self._existing_universe(d.get('universe', ''))
+        limit = d.get('canon_limit', 12)
+        if isinstance(limit, bool):
+            raise ValueError('Canon limit must be a whole number.')
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError('Canon limit must be a whole number.')
+        return preview_canon(
+            self.canon.approved_context(universe),
+            str(d.get('text') or ''), limit
+        )['context_text']
+
     def editorial(self, d: Dict[str, Any]) -> Dict[str, Any]:
-        return editorial_review(self.provider, d,
-                                max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000))
+        return editorial_review(
+            self.provider, d,
+            max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000),
+            canon_context=self.editorial_canon_context(d),
+        )
+
+    def canon_context_preview(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        limit = d.get('limit', 12)
+        if isinstance(limit, bool):
+            raise ValueError('Fact limit must be a whole number.')
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError('Fact limit must be a whole number.')
+        result = preview_canon(
+            self.canon.approved_context(universe), str(d.get('query') or ''), limit
+        )
+        result['universe'] = universe
+        result['read_only'] = True
+        return result
+
+    def canon_continuity_check(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        result = check_continuity(
+            d.get('text'), self.canon.approved_context(universe)
+        )
+        result['universe'] = universe
+        return result
 
     def _existing_universe(self, name: str) -> str:
         if not isinstance(name, str) or not name.strip():
@@ -255,8 +301,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _editorial_stream(self, payload: Dict[str, Any]) -> None:
         """On-demand, read-only editorial streaming; never saves a manuscript."""
-        prepared = prepare_editorial(
-            payload, max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000))
+        try:
+            canon_context = self.app.editorial_canon_context(payload)
+            prepared = prepare_editorial(
+                payload, max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000),
+                canon_context=canon_context)
+        except ValueError as exc:
+            self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            return
         if not prepared['ok']:
             self.json_response(prepared, code=400)
             return
@@ -454,6 +506,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/canon/review':
             self._guard(app.canon_review, d)
+            return
+        if path == '/api/novelforge/canon/context':
+            self._guard(app.canon_context_preview, d)
+            return
+        if path == '/api/novelforge/canon/continuity':
+            self._guard(app.canon_continuity_check, d)
             return
         # Story Forge actions
         story_routes = {
