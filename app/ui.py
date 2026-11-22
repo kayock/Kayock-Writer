@@ -1066,6 +1066,12 @@ async function testModelConfig(){
   q('cfgTestStatus').className='status '+(d.ok?'ok':'err');
   renderHome();
 }
+async function inspectModelCapabilities(){
+  q('cfgCapabilitiesStatus').textContent='Reading advertised model metadata (no inference)…';
+  const d=await api('/api/model/capabilities');
+  q('cfgCapabilitiesStatus').textContent=JSON.stringify(d,null,2);
+  q('cfgCapabilitiesStatus').className='status '+(d.ok?'ok':'err');
+}
 
 /* ============================ optional finishing desk ============================ */
 async function renderFinishing(){
@@ -1838,8 +1844,10 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" onclick="saveModelConfig()">Save endpoint settings</button>
       <button class="btn" onclick="testModelConfig()">Test connection</button>
+      <button class="btn" onclick="inspectModelCapabilities()">Inspect advertised capabilities (no generation)</button>
     </div>
     <div id="cfgTestStatus" class="status">The test lists reachable endpoints and probes one chat completion.</div>
+    <div id="cfgCapabilitiesStatus" class="status">Capability inspection is optional and read-only. Missing metadata will be shown as unknown, not unsupported.</div>
   </div>
   <div class="card wide"><h3>Optional Craft Suite browser handoff</h3>
     <p class="small">Enter the LAN address of your Craft Suite homepage. This only opens the site in a separate tab; export/import remains manual until its APIs are verified.</p>
