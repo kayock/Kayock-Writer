@@ -1933,6 +1933,7 @@ async function renderFinishing(){
   if(universes.some(u=>u.name===selected))selector.value=selected;
   else if(S.novel.active && universes.some(u=>u.name===S.novel.active))selector.value=S.novel.active;
   await voiceDnaRefresh();
+  await councilLoadModels();
   await bookPublishInit();
 }
 /* ========================= optional author-owned Voice DNA ========================= */
@@ -2128,6 +2129,173 @@ async function finishingReviewClassic(){
   }finally{editorialBusy=false;}
 }
 /* ==================== author-controlled Editorial Council (v2) ==================== */
+/* Author-selected Council models reuse inert Saved Model Profiles in Settings.
+   Other endpoints never inherit the current model endpoint's API key. */
+async function councilLoadModels(){
+  const ids=[
+    'councilModelStory','councilModelContinuity','councilModelVoice',
+    'councilModelLine','councilModelSynthesis'
+  ];
+  const [catalog, profiles]=await Promise.all([
+    api('/api/writer/council/roles'),api('/api/model/profiles')
+  ]);
+  if(!catalog.ok||!profiles.ok){
+    q('councilModelStatus').textContent=
+      (catalog.message||profiles.message||'Unable to read saved model profiles.')+
+      ' Current model stays the default; no requests have been sent to a model.';
+    return;
+  }
+  const options=profiles.profiles||[];
+  for(const id of ids){
+    const field=q(id),old=field.value;
+    field.replaceChildren();
+    field.appendChild(new Option('Active model: '+catalog.model,''));
+    for(const p of options){
+      field.appendChild(new Option(
+        p.name+' — '+p.settings.model+' @ '+p.settings.base_url+
+        ' ('+p.settings.timeout_seconds+'s saved timeout)',p.id
+      ));
+    }
+    if(options.some(p=>p.id===old))field.value=old;
+  }
+  q('councilModelStatus').textContent=
+    'Available saved profiles: '+options.length+
+    '. Profiles are selected per role; selecting one never changes active Settings. '+
+    'An active API key will not be forwarded to a different endpoint. '+
+    'A different endpoint requiring credentials may reject the request.';
+}
+function councilSelectedProfileIds(){
+  const fields={
+    story_architect:'councilModelStory',
+    continuity_editor:'councilModelContinuity',
+    voice_guardian:'councilModelVoice',
+    line_editor:'councilModelLine'
+  };
+  const choices={};
+  for(const role of councilSelectedRoles()){
+    const id=q(fields[role]).value;
+    if(id)choices[role]=id;
+  }
+  return choices;
+}
+const councilDecisions={items:[],sourceFingerprint:'',baseline:''};
+function councilDecisionStatus(message,kind=''){
+  const node=q('councilDecisionStatus');
+  node.textContent=message;
+  node.className='status '+kind;
+}
+function councilDecisionCapture(role,field){
+  const start=field.selectionStart,end=field.selectionEnd;
+  const chosen=field.value.slice(start,end).trim();
+  if(!chosen){
+    councilDecisionStatus('Select a specific recommendation in the reviewer report first.','err');
+    return;
+  }
+  councilAddDecision(role,chosen);
+}
+function councilAddDecision(role,quote){
+  if(!quote||quote.length>1500||councilDecisions.items.length>=100){
+    councilDecisionStatus('Select 1–1,500 characters; the board accepts up to 100 decisions.','err');
+    return;
+  }
+  if(!councilDecisions.items.length){
+    councilDecisions.sourceFingerprint=councilState.sourceFingerprint||'';
+    councilDecisions.baseline=councilState.baseline||'';
+  }
+  if(councilDecisions.baseline!==councilState.baseline){
+    councilDecisionStatus('This board belongs to an earlier Council run. Export it before starting a new board.','err');
+    return;
+  }
+  councilDecisions.items.push({
+    id:'d'+Date.now().toString(36)+Math.random().toString(36).slice(2,9),
+    role,quote,status:'pending',note:''
+  });
+  councilDecisionRender();
+  councilDecisionStatus('Added a recommendation for your individual review. Nothing was applied.','ok');
+}
+function councilDecisionManual(){
+  const quote=q('councilDecisionText').value.trim();
+  if(!quote){councilDecisionStatus('Type a specific recommendation first.','err');return;}
+  councilAddDecision('author_note',quote);
+  if(councilDecisions.items.some(x=>x.quote===quote))q('councilDecisionText').value='';
+}
+function councilDecisionRender(){
+  const target=q('councilDecisionBoard');
+  target.replaceChildren();
+  if(!councilDecisions.items.length){
+    const msg=document.createElement('p');
+    msg.className='small';
+    msg.textContent='No decisions yet. Select an excerpt from a reviewer report or add your own note.';
+    target.appendChild(msg);
+    return;
+  }
+  const stale=councilDecisions.baseline!==councilKey();
+  const note=document.createElement('p');
+  note.className='small';
+  note.textContent=stale?'The passage or model selection has changed since these decisions were collected. Treat these as historical notes; no manuscript changes have been made.':
+    'These choices are advisory notes only. Approve does not alter any draft.';
+  target.appendChild(note);
+  for(const item of councilDecisions.items){
+    const card=document.createElement('div');card.className='card';
+    const heading=document.createElement('strong');
+    heading.textContent=item.role.replace(/_/g,' ')+' · '+item.status;
+    const quote=document.createElement('p');
+    quote.textContent=item.quote;
+    const row=document.createElement('div');row.className='row';
+    const select=document.createElement('select');
+    select.setAttribute('aria-label','Decision for '+item.role);
+    for(const [value,label] of [
+      ['pending','Pending'],['approved','Approved for consideration'],
+      ['rejected','Rejected'],['deferred','Defer']
+    ])select.appendChild(new Option(label,value));
+    select.value=item.status;
+    select.addEventListener('change',()=>{
+      item.status=select.value;
+      heading.textContent=item.role.replace(/_/g,' ')+' · '+item.status;
+      councilDecisionStatus('Decision updated locally. Nothing has been applied.','ok');
+    });
+    const remove=document.createElement('button');
+    remove.type='button';remove.className='btn';
+    remove.textContent='Remove';
+    remove.addEventListener('click',()=>{
+      councilDecisions.items=councilDecisions.items.filter(x=>x.id!==item.id);
+      councilDecisionRender();
+    });
+    row.appendChild(select);row.appendChild(remove);
+    const comment=document.createElement('textarea');
+    comment.setAttribute('aria-label','Author note');
+    comment.maxLength=2000;
+    comment.placeholder='Why accept, reject or defer? (optional; never sent to a model)';
+    comment.value=item.note;
+    comment.addEventListener('input',()=>{item.note=comment.value;});
+    card.appendChild(heading);card.appendChild(quote);
+    card.appendChild(row);card.appendChild(comment);
+    target.appendChild(card);
+  }
+}
+function councilDecisionExport(){
+  if(!councilDecisions.items.length){
+    councilDecisionStatus('Add at least one author decision before exporting.','err');
+    return;
+  }
+  const exportData={
+    schema:'kayock.writer.council_decisions.v1',
+    source_fingerprint:councilDecisions.sourceFingerprint,
+    source_changed:councilKey()!==councilDecisions.baseline,
+    choices:councilDecisions.items.map(x=>({
+      role:x.role,quote:x.quote,status:x.status,note:x.note
+    })),
+    source_text_included:false,
+    manuscript_applied:false
+  };
+  const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='kayock-council-decisions.json';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  councilDecisionStatus('Decision notes downloaded as JSON. No server or manuscript files were changed.','ok');
+}
 const councilState={
   busy:false,generation:null,phase:'',baseline:null,roles:[],
   sourceFingerprint:null,reports:[],reviewComplete:false
@@ -2143,12 +2311,16 @@ function councilSelectedRoles(){
 function councilKey(){
   const p=editorialPayload();
   delete p.mode;
-  return JSON.stringify({...p,roles:councilSelectedRoles()});
+  return JSON.stringify({...p,roles:councilSelectedRoles(),
+    role_profiles:councilSelectedProfileIds(),
+    synthesis_profile_id:q('councilModelSynthesis').value});
 }
 function councilReviewPayload(){
   const p=editorialPayload();
   delete p.mode;
-  return {...p,stage:'reviews',roles:councilSelectedRoles()};
+  return {...p,stage:'reviews',roles:councilSelectedRoles(),
+    role_profiles:councilSelectedProfileIds(),
+    synthesis_profile_id:q('councilModelSynthesis').value};
 }
 function councilSetStatus(message,kind=''){
   const element=q('councilStatus');
@@ -2173,13 +2345,19 @@ function councilRenderReports(){
       story_architect:'Story Architect',continuity_editor:'Continuity Editor',
       voice_guardian:'Voice Guardian',line_editor:'Line Editor'
     };
-    title.textContent=labels[report.role]||report.role;
+    title.textContent=(labels[report.role]||report.role)+
+      (report.model?' · '+report.model:'');
     const field=document.createElement('textarea');
     field.className='big';
     field.readOnly=true;
     field.value=report.text;
+    const add=document.createElement('button');
+    add.type='button';add.className='btn';
+    add.textContent='Add selected recommendation to decision board';
+    add.addEventListener('click',()=>councilDecisionCapture(report.role,field));
     card.appendChild(title);
     card.appendChild(field);
+    card.appendChild(add);
     target.appendChild(card);
   }
 }
@@ -2202,7 +2380,13 @@ async function councilRun(){
     return;
   }
   const oneCallEach=payload.roles.length;
-  if(!confirm('Run '+oneCallEach+' sequential model call(s) using your configured endpoint? Each reviewer will see the full selected passage and any explicitly enabled references. No revisions are applied.'))return;
+  if(councilDecisions.items.length&&!confirm(
+      'Starting a new Council run will clear the current unsaved decision board. Export it first if you want to keep your decisions. Continue?'))return;
+  if(!confirm('Run '+oneCallEach+' sequential model call(s) using your selected saved model profiles (or the active model by default)? Each reviewer sees the original passage and explicitly enabled references. No revisions are applied.'))return;
+  councilDecisions.items=[];
+  councilDecisions.sourceFingerprint='';
+  councilDecisions.baseline='';
+  councilDecisionRender();
   councilState.baseline=councilKey();
   councilState.roles=payload.roles.slice();
   councilState.reports=[];
@@ -2224,7 +2408,7 @@ async function councilSynthesize(){
     councilSetStatus('The passage, roles or references changed. Run fresh reviews before synthesizing.','err');
     return;
   }
-  if(!confirm('Ask the configured model for ONE additional synthesis call using the complete reviewer reports and original passage? No report is compacted or applied.'))return;
+  if(!confirm('Ask the selected synthesis model for ONE additional call using the complete reviewer reports and original passage? No report is compacted or applied.'))return;
   const payload={
     ...councilReviewPayload(),stage:'synthesis',
     reports:councilState.reports.map(item=>({role:item.role,text:item.text})),
@@ -2284,15 +2468,18 @@ async function councilStream(payload,stage){
           'Reviewing with '+payload.roles.length+' selected role(s)…':
           'Generating author-requested synthesis…');
       }else if(name==='role_start'){
-        live.value='['+(item.label||item.role)+']\n';
+        live.value='['+(item.label||item.role)+
+          (item.model?' · '+item.model:'')+']\n';
         councilSetStatus('Working: '+(item.label||item.role)+
+          (item.model?' on '+item.model:'')+
           '. No other reviewer is running concurrently.');
       }else if(name==='role_token'){
         live.value+=item.text||'';
         live.scrollTop=live.scrollHeight;
       }else if(name==='role_done'){
         if(stage==='reviews'){
-          councilState.reports.push({role:item.role,text:item.text});
+          councilState.reports.push({role:item.role,text:item.text,
+            model:item.model||''});
           councilRenderReports();
           councilSetStatus(councilState.reports.length+' of '+
             councilState.roles.length+' reviewer(s) completed. Read-only reports.');
@@ -3438,6 +3625,18 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div><label><input type="checkbox" id="councilVoice" checked> Voice Guardian — protect distinctive style</label></div>
       <div><label><input type="checkbox" id="councilLine"> Line Editor — optional sentence-level suggestions</label></div>
     </div>
+    <details><summary>Model assignments (optional, per reviewer)</summary>
+      <p class="small">Each role defaults to the currently configured model. Select from the saved model profiles in Settings to use a different existing endpoint/model for that role. These are on-demand requests only. A saved profile retains its own timeout; Writer does not change the active model or start a new server. API credentials for the active endpoint are never forwarded to a different endpoint.</p>
+      <div class="row">
+        <div><label>Story Architect model</label><select id="councilModelStory"><option value="">Active model</option></select></div>
+        <div><label>Continuity Editor model</label><select id="councilModelContinuity"><option value="">Active model</option></select></div>
+        <div><label>Voice Guardian model</label><select id="councilModelVoice"><option value="">Active model</option></select></div>
+        <div><label>Line Editor model</label><select id="councilModelLine"><option value="">Active model</option></select></div>
+        <div><label>Optional synthesis model</label><select id="councilModelSynthesis"><option value="">Active model</option></select></div>
+        <div class="fixed"><button class="btn" onclick="councilLoadModels()">Refresh saved model profiles</button></div>
+      </div>
+      <div class="status" id="councilModelStatus">The active model is used unless you select a saved profile. No model connection has been made.</div>
+    </details>
     <p class="small">Approved Story Bible facts and Voice DNA are included only if you enabled them above. Results are shown separately. No stage starts automatically; optional synthesis is a separate model call and never rewrites or accepts a draft.</p>
     <div class="row">
       <button class="btn primary" id="councilRunButton" onclick="councilRun()">Run selected Council reviews</button>
@@ -3451,6 +3650,17 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div id="councilReports"><p class="small">Reviewer reports will appear here after each role finishes.</p></div>
     <label>Optional Council synthesis (read-only)</label>
     <textarea id="councilSummary" class="big" readonly placeholder="No synthesis runs unless you request it separately."></textarea>
+    <details><summary><strong>Author Decision Board — review suggestions one at a time</strong></summary>
+      <p class="small">Highlight a specific recommendation in a completed reviewer report and click its Add selected recommendation button. You can also write a personal note below. Mark each item Approved for consideration, Rejected, Deferred or Pending. These are editorial decisions only—not permission to modify, replace or publish your manuscript. Nothing is auto-extracted.</p>
+      <div id="councilDecisionBoard"><p class="small">No decisions yet.</p></div>
+      <label>Author-added recommendation or note</label>
+      <textarea id="councilDecisionText" maxlength="1500" placeholder="A specific idea to consider, separate from the manuscript."></textarea>
+      <div class="row">
+        <button class="btn" onclick="councilDecisionManual()">Add author note</button>
+        <button class="btn" onclick="councilDecisionExport()">Download decision board JSON</button>
+      </div>
+      <div class="status" id="councilDecisionStatus">Decisions stay in this browser session unless you explicitly download them. No server or manuscript writes.</div>
+    </details>
     <p class="small">Reports and synthesis exist only in this browser session; they are not automatically saved, applied, published or added to canon. Copy passages manually if you choose to use them. Editing the input or selected roles after review requires fresh reviews before synthesis.</p>
   </details>
   <div class="card wide"><h3>Full-Book Assembly &amp; Publishing</h3>
