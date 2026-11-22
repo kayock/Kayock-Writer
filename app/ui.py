@@ -2128,7 +2128,10 @@ async function finishingReviewClassic(){
   }finally{editorialBusy=false;}
 }
 /* ===================== full-book assembly and downloads ===================== */
-const bookPublishState={sourceKey:'',entries:[],snapshot:null,coverBase64:'',coverName:''};
+const bookPublishState={
+  sourceKey:'',entries:[],snapshot:null,
+  coverBase64:'',coverName:'',fontBase64:'',fontName:''
+};
 async function bookPublishCoverChange(){
   const input=q('bookPublishCover');
   const file=input.files&&input.files[0];
@@ -2157,6 +2160,42 @@ async function bookPublishCoverChange(){
     q('bookPublishCoverStatus').textContent='Unable to read selected JPEG: '+String(error);
     input.value='';
   }
+}
+async function bookPublishFontChange(){
+  const input=q('bookPublishFont');
+  const file=input.files&&input.files[0];
+  bookPublishState.fontBase64='';
+  bookPublishState.fontName='';
+  bookPublishInvalidate();
+  if(!file){
+    q('bookPublishFontStatus').textContent='Default PDF fonts (Western characters only).';
+    return;
+  }
+  if(file.size>3*1024*1024||file.size<512||!/\.ttf$/i.test(file.name)){
+    input.value='';
+    q('bookPublishFontStatus').textContent='Choose a licensed .ttf file from 512 bytes to 3 MB (not OTF/TTC).';
+    return;
+  }
+  try{
+    const data=new Uint8Array(await file.arrayBuffer());
+    let raw='';
+    for(let i=0;i<data.length;i+=16384)
+      raw+=String.fromCharCode(...data.subarray(i,i+16384));
+    bookPublishState.fontBase64=btoa(raw);
+    bookPublishState.fontName=file.name;
+    q('bookPublishFontStatus').textContent='Selected font '+file.name+' ('+
+      Math.round(file.size/1024)+' KB). It is embedded in the downloaded PDF only, not stored on the server. Ensure you have permission to embed it.';
+  }catch(error){
+    input.value='';
+    q('bookPublishFontStatus').textContent='Could not read .ttf: '+String(error);
+  }
+}
+function bookPublishClearFont(){
+  q('bookPublishFont').value='';
+  bookPublishState.fontBase64='';
+  bookPublishState.fontName='';
+  bookPublishInvalidate();
+  q('bookPublishFontStatus').textContent='Default PDF fonts (Western characters only).';
 }
 function bookPublishClearCover(){
   q('bookPublishCover').value='';
@@ -2272,6 +2311,7 @@ function bookPublishRequest(){
     title:q('bookPublishTitle').value,
     author:q('bookPublishAuthor').value,
     cover_jpeg_base64:bookPublishState.coverBase64,
+    pdf_ttf_base64:bookPublishState.fontBase64,
     chapters:bookPublishState.entries.filter(e=>e.include).map(e=>({
       chapter:e.chapter,filename:e.filename
     }))
@@ -2301,6 +2341,9 @@ async function bookPublishPreview(){
     '\nChapters: '+result.chapter_count+' · Total words: '+result.total_words+
     '\nCover: '+(result.cover_present?
       ('author-supplied RGB JPEG ('+result.cover_dimensions.join(' × ')+')'):'none')+
+    '\nPDF font: '+(result.unicode_pdf_font_present?
+      'author-selected Unicode TrueType (simple glyph positioning only)':
+      'built-in Western-character PDF font')+
     '\n\n'+result.chapters.map((c,i)=>(
       (i+1)+'. '+c.title+' · v'+c.version+' · '+c.words+' words'+
       '\n    '+c.excerpt.replace(/\s+/g,' ').slice(0,140)
@@ -2346,6 +2389,33 @@ async function bookPublishDownload(format){
     status.className='status err';
   }
 }
+let finishPdfFontBase64='';
+async function finishPdfFontChange(){
+  const input=q('finishPdfFont');
+  const file=input.files&&input.files[0];
+  finishPdfFontBase64='';
+  if(!file){
+    q('finishPdfFontStatus').textContent='Default PDF font selected.';
+    return;
+  }
+  if(file.size<512||file.size>3*1024*1024||!/\.ttf$/i.test(file.name)){
+    input.value='';
+    q('finishPdfFontStatus').textContent='Choose a .ttf file up to 3 MB.';
+    return;
+  }
+  try{
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    let raw='';
+    for(let i=0;i<bytes.length;i+=16384)
+      raw+=String.fromCharCode(...bytes.subarray(i,i+16384));
+    finishPdfFontBase64=btoa(raw);
+    q('finishPdfFontStatus').textContent='Font '+file.name+
+      ' selected for PDF only. It will be embedded in the download; choose one you are licensed to embed.';
+  }catch(e){
+    input.value='';
+    q('finishPdfFontStatus').textContent=String(e);
+  }
+}
 async function finishingExportPackage(format){
   const text=q('finishText').value;
   if(!text.trim()){
@@ -2356,7 +2426,8 @@ async function finishingExportPackage(format){
     title:q('finishTitle').value,
     author:q('finishAuthor').value,
     writing_type:q('finishType').value,
-    text,format
+    text,format,
+    ...(format==='pdf'?{pdf_ttf_base64:finishPdfFontBase64}:{})
   };
   q('finishPublishingStatus').textContent='Building a '+format.toUpperCase()+' file locally…';
   try{
@@ -3164,6 +3235,13 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div class="fixed"><button class="btn" onclick="bookPublishClearCover()">Clear cover</button></div>
     </div>
     <div id="bookPublishCoverStatus" class="status">No cover selected. Cover files are used for this export only, not stored in Writer.</div>
+    <div class="row">
+      <div><label>Optional Unicode PDF font (a .ttf you are licensed to embed, max 3 MB)</label>
+        <input id="bookPublishFont" type="file" accept=".ttf" onchange="bookPublishFontChange()"></div>
+      <div class="fixed"><button class="btn" onclick="bookPublishClearFont()">Use default font</button></div>
+    </div>
+    <div id="bookPublishFontStatus" class="status">Default PDF fonts (Western characters only). No font files are bundled or stored in Writer.</div>
+    <p class="small">Selected TrueType fonts can preserve many Unicode glyphs in a searchable PDF. No bidirectional or complex-script shaping, color emoji, or automatic fallback is implemented. Missing glyphs cause an error. DOCX and EPUB remain the preferred choice for complex scripts.</p>
     <div id="bookPublishStatus" class="status">Choose an existing Story Forge project and book.</div>
     <h4>Saved chapters — selection and reading order</h4>
     <div id="bookPublishChoices"></div>
@@ -3175,7 +3253,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <button class="btn" id="bookPublishPdf" onclick="bookPublishDownload('pdf')" disabled>Download book PDF</button>
     </div>
     <div id="bookPublishDownloadStatus" class="status">No book export has been requested.</div>
-    <p class="small">DOCX and EPUB preserve Unicode text. The first PDF layout is a searchable, page-numbered basic edition using Windows-1252 fonts; unsupported characters cause a clear error, not character replacement. No files are written to your manuscript folders.</p>
+    <p class="small">DOCX and EPUB preserve Unicode text; PDF supports Western characters by default and many additional Unicode glyphs with an explicitly selected TrueType font. Missing glyphs or unsupported font formats are rejected, never silently replaced. Covers and fonts are used for this download, not saved into manuscript folders.</p>
   </div>
   <div class="card wide"><h3>Craft Suite handoff</h3>
     <p class="small">Download a manuscript file and import it into WordCraft or another editor. There is no assumed Craft Suite import API.</p>
@@ -3186,6 +3264,11 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <button class="btn" onclick="finishingExport('md')">Download Markdown</button>
     <button class="btn" onclick="finishingExport('txt')">Download plain text</button>
     <button class="btn" onclick="finishingOpenCraft()">Open Craft Suite (configured URL)</button>
+    <div class="row">
+      <div><label>Optional TrueType font for single-passage PDF (.ttf, max 3 MB)</label>
+        <input id="finishPdfFont" type="file" accept=".ttf" onchange="finishPdfFontChange()"></div>
+      <div id="finishPdfFontStatus" class="small">Default PDF font selected. No files stored in Writer.</div>
+    </div>
     <div id="finishPublishingStatus" class="status">Files are generated on request from the Finishing Desk passage. They are not saved into your manuscript folders.</div>
     <p class="small">Single-passage DOCX, EPUB and basic PDF exports remain available. For a multi-chapter manuscript, use the Full-Book Assembly workspace above. EPUB includes navigation; DOCX includes an editable contents page; PDF uses conservative WinAnsi fonts with explicit unsupported-character rejection.</p>
   </div>
