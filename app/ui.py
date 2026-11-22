@@ -1503,8 +1503,14 @@ async function storyDraftsContinue(stage){
   if(stage==='action'&&d.ok)storyDraftsRefresh();
 }
 /* ==================== isolated chapter draft branches ==================== */
-const storyBranchState={id:null,revision:null,loadedText:'',busy:false};
+const storyBranchState={id:null,revision:null,loadedText:'',busy:false,acceptPreview:null};
+function storyBranchClearAcceptance(){
+  storyBranchState.acceptPreview=null;
+  q('storyBranchAccept').disabled=true;
+  q('storyBranchAcceptStatus').textContent='Preview the exact saved alternative and current main draft before accepting.';
+}
 async function storyBranchRefresh(){
+  storyBranchClearAcceptance();
   const project=q('storyDraftsProject').value;
   const book=q('storyDraftsBook').value;
   const chapter=q('storyDraftsChapter').value;
@@ -1562,6 +1568,7 @@ async function storyBranchCreate(){
   }
 }
 async function storyBranchLoad(skipPrompt=false){
+  storyBranchClearAcceptance();
   if(!skipPrompt&&storyBranchWouldReplaceUnsaved())return;
   const branch_id=q('storyBranchSelect').value;
   if(!branch_id){
@@ -1585,6 +1592,7 @@ async function storyBranchLoad(skipPrompt=false){
   q('storyBranchStatus').className='status ok';
 }
 async function storyBranchSave(){
+  storyBranchClearAcceptance();
   if(storyBranchState.busy)return;
   if(!storyBranchState.id||storyBranchState.id!==q('storyBranchSelect').value||
      !storyBranchState.revision){
@@ -1607,6 +1615,73 @@ async function storyBranchSave(){
     storyBranchState.loadedText=content;
     await storyBranchRefresh();
     q('storyBranchSelect').value=storyBranchState.id;
+  }
+}
+async function storyBranchAcceptancePreview(){
+  storyBranchClearAcceptance();
+  const selected=q('storyBranchSelect').value;
+  if(!selected||storyBranchState.id!==selected||!storyBranchState.revision){
+    q('storyBranchAcceptStatus').textContent='Load the saved alternative first.';
+    return;
+  }
+  if(q('storyBranchText').value!==storyBranchState.loadedText){
+    q('storyBranchAcceptStatus').textContent='There are unsaved alternative edits. Save a new branch version first, or reload the saved version before accepting.';
+    return;
+  }
+  const project=q('storyDraftsProject').value;
+  const book=q('storyDraftsBook').value;
+  const result=await api('/api/writer/story/branches/preview_accept',{
+    project_id:project,book_id:book,branch_id:selected
+  });
+  if(!result.ok){
+    q('storyBranchAcceptStatus').textContent=result.message||'Acceptance preview unavailable.';
+    return;
+  }
+  storyBranchState.acceptPreview={
+    token:result.confirmation_token,branch_id:selected,project_id:project,
+    book_id:book,revision:storyBranchState.revision
+  };
+  q('storyBranchAccept').disabled=false;
+  q('storyBranchAcceptStatus').textContent=
+    'READ-ONLY ACCEPTANCE PREVIEW\n\nBranch: '+result.branch_name+
+    ' (v'+result.branch_version+')\nChapter: '+result.chapter+
+    '\nCurrent main version: '+result.current_version+
+    '\nWould append main version: '+result.expected_next_version+
+    '\nCurrent main words: '+result.main_words+
+    '\nAlternative words: '+result.alternative_words+
+    '\n\n'+result.diff_preview.join('\n')+
+    (result.truncated?'\n\n(Diff preview limited to 400 lines)':'')+
+    '\n\nNo content has been changed. Confirm separately to append a new canonical version.';
+}
+async function storyBranchAccept(){
+  const p=storyBranchState.acceptPreview;
+  if(!p||p.branch_id!==q('storyBranchSelect').value||
+      p.project_id!==q('storyDraftsProject').value||
+      p.book_id!==q('storyDraftsBook').value||
+      p.revision!==storyBranchState.revision){
+    storyBranchClearAcceptance();
+    q('storyBranchAcceptStatus').textContent='Preview this branch again before accepting.';
+    return;
+  }
+  if(q('storyBranchText').value!==storyBranchState.loadedText){
+    storyBranchClearAcceptance();
+    q('storyBranchAcceptStatus').textContent='Save or discard unsaved branch edits before accepting.';
+    return;
+  }
+  if(!confirm('ACCEPT THIS ALTERNATIVE AS A NEW CANONICAL CHAPTER DRAFT VERSION?\n\nEarlier versions will remain saved. The branch will remain available.'))return;
+  q('storyBranchAccept').disabled=true;
+  storyBranchState.acceptPreview=null;
+  const result=await api('/api/writer/story/branches/accept',{
+    project_id:p.project_id,book_id:p.book_id,branch_id:p.branch_id,
+    confirmation_token:p.token
+  });
+  q('storyBranchAcceptStatus').textContent=result.message||'Acceptance was rejected.';
+  q('storyBranchAcceptStatus').className='status '+(result.ok?'ok':'err');
+  if(result.ok){
+    toast('Alternative accepted as a NEW saved chapter draft version.','ok');
+    await storyDraftsRefresh();
+  }else{
+    toast('Not accepted. Refresh and preview again before retrying.','err');
   }
 }
 async function storyBranchCompare(){
@@ -2612,6 +2687,12 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <button class="btn" onclick="storyBranchCompare()">Compare saved alternative with source</button></div>
     <div id="storyBranchStatus" class="status">No branch selected; no changes to canonical drafts.</div>
     <pre id="storyBranchCompare" class="status" style="white-space:pre-wrap;max-height:330px;overflow:auto">Diff preview is read-only.</pre>
+    <div class="card"><h4>Accept an alternative as a new chapter version</h4>
+      <p class="small">First preview the saved branch against the latest canonical chapter. If either changes, the confirmation expires. Acceptance appends a NEW draft version through the existing save workflow; earlier versions and the branch remain available.</p>
+      <div class="row"><button class="btn" onclick="storyBranchAcceptancePreview()">Preview acceptance and diff</button>
+        <button class="btn primary" id="storyBranchAccept" onclick="storyBranchAccept()" disabled>Accept previewed alternative as a new main draft version</button></div>
+      <pre id="storyBranchAcceptStatus" class="status" style="white-space:pre-wrap;max-height:330px;overflow:auto">Preview the saved alternative and current main draft before accepting.</pre>
+    </div>
   </div>
 </section>
 
