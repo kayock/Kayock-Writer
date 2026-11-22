@@ -24,6 +24,8 @@ from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .recovery import UniverseRecovery
 from .model_profiles import ModelProfiles
+from .voice_dna import VoiceDNA
+from .publishing import build_export
 from .relationships import build_graph
 from .timeline import chronology, character_knowledge
 from .poetry import PoetryForge
@@ -60,6 +62,7 @@ class App:
         self.novelforge = NovelForge(self.store)
         self.recovery = UniverseRecovery(self.store, self.novelforge)
         self.model_profiles = ModelProfiles(self.store)
+        self.voice_dna = VoiceDNA(self.store)
         self.canon = CanonStore(self.store)
         self.storyforge = StoryForge(
             self.store,
@@ -142,11 +145,21 @@ class App:
             str(d.get('text') or ''), limit
         )['context_text']
 
+    def editorial_voice_context(self, d: Dict[str, Any]) -> str:
+        # Author must explicitly select a saved card for each review.
+        if d.get('use_voice_dna') is not True:
+            return ''
+        selected = d.get('voice_dna_id')
+        if not isinstance(selected, str) or not selected:
+            raise ValueError('Select a Voice DNA card before using it for a review.')
+        return self.voice_dna.prompt_context(selected)
+
     def editorial(self, d: Dict[str, Any]) -> Dict[str, Any]:
         return editorial_review(
             self.provider, d,
             max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000),
             canon_context=self.editorial_canon_context(d),
+            voice_context=self.editorial_voice_context(d),
         )
 
     def canon_context_preview(self, d: Dict[str, Any]) -> Dict[str, Any]:
@@ -370,9 +383,10 @@ class Handler(BaseHTTPRequestHandler):
         """On-demand, read-only editorial streaming; never saves a manuscript."""
         try:
             canon_context = self.app.editorial_canon_context(payload)
+            voice_context = self.app.editorial_voice_context(payload)
             prepared = prepare_editorial(
                 payload, max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000),
-                canon_context=canon_context)
+                canon_context=canon_context, voice_context=voice_context)
         except ValueError as exc:
             self.json_response({'ok': False, 'message': str(exc)}, code=400)
             return
@@ -457,6 +471,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/model/profiles':
             self._guard(app.model_profiles.list)
             return
+        if path == '/api/writer/voice_dna':
+            self._guard(app.voice_dna.list)
+            return
+        if path == '/api/writer/voice_dna/read':
+            self._guard(app.voice_dna.get, q1('id'))
+            return
         # Poetry Forge / archive
         if path == '/api/writer/poetry/archive':
             self._guard(app.poetry.archive)
@@ -535,6 +555,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         app = self.app
 
+        if path == '/api/writer/publishing/export':
+            try:
+                rendered = build_export(d)
+                filename = rendered['filename']
+                # build_export owns filename sanitation and MIME validation.
+                self.send_response(200)
+                self.send_header('Content-Type', rendered['content_type'])
+                self.send_header('Content-Disposition',
+                                 'attachment; filename="' + filename + '"')
+                self.send_header('Content-Length', str(len(rendered['body'])))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                self.wfile.write(rendered['body'])
+            except ValueError as exc:
+                self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if path == '/api/writer/editorial/stream':
             self._editorial_stream(d)
             return
@@ -689,6 +728,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/config/model/test':
             self._guard(app.test_model_settings)
+            return
+        if path == '/api/writer/voice_dna/create':
+            self._guard(app.voice_dna.create, d.get('profile'))
+            return
+        if path == '/api/writer/voice_dna/delete':
+            self._guard(app.voice_dna.delete, d.get('id'))
             return
         if path == '/api/model/profiles/save':
             self._guard(app.model_profiles.save, d.get('name'), d.get('settings'))
