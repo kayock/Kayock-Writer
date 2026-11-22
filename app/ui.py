@@ -2184,9 +2184,9 @@ function councilRenderReports(){
   }
 }
 function councilStateButtons(){
-  q('councilRun').disabled=councilState.busy;
-  q('councilStop').disabled=!councilState.busy||!councilState.generation;
-  q('councilSynthesize').disabled=councilState.busy||
+  q('councilRunButton').disabled=councilState.busy;
+  q('councilStopButton').disabled=!councilState.busy||!councilState.generation;
+  q('councilSynthesizeButton').disabled=councilState.busy||
     !councilState.reviewComplete||
     councilState.reports.length!==councilState.roles.length;
 }
@@ -2235,7 +2235,7 @@ async function councilSynthesize(){
 }
 async function councilStop(){
   if(!councilState.generation)return;
-  q('councilStop').disabled=true;
+  q('councilStopButton').disabled=true;
   councilSetStatus('Stopping the current Council model call…');
   const result=await api('/api/generation/'+
     encodeURIComponent(councilState.generation)+'/cancel',{});
@@ -3440,9 +3440,9 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     </div>
     <p class="small">Approved Story Bible facts and Voice DNA are included only if you enabled them above. Results are shown separately. No stage starts automatically; optional synthesis is a separate model call and never rewrites or accepts a draft.</p>
     <div class="row">
-      <button class="btn primary" id="councilRun" onclick="councilRun()">Run selected Council reviews</button>
-      <button class="btn" id="councilStop" onclick="councilStop()" disabled>Stop Council</button>
-      <button class="btn" id="councilSynthesize" onclick="councilSynthesize()" disabled>Synthesize completed reports (optional)</button>
+      <button class="btn primary" id="councilRunButton" onclick="councilRun()">Run selected Council reviews</button>
+      <button class="btn" id="councilStopButton" onclick="councilStop()" disabled>Stop Council</button>
+      <button class="btn" id="councilSynthesizeButton" onclick="councilSynthesize()" disabled>Synthesize completed reports (optional)</button>
     </div>
     <div class="status" id="councilStatus">No Council run. Original writing remains untouched.</div>
     <label>Current reviewer stream (read-only)</label>
