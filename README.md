@@ -15,6 +15,22 @@ It is a **standalone extraction of the writing tools from [FOXAI](https://github
 > [!IMPORTANT]
 > **LAN security:** v1.1.0 has **no built-in user login or HTTPS**. Anyone who can reach the Writer web port may be able to read or modify writing and settings. Use it only on a trusted LAN, or bind to \`127.0.0.1\` for local-only access. **Do not expose it directly to the public internet.**
 
+## Development release-readiness verification
+
+The development branch now includes a dedicated **real Chromium browser smoke
+test** in GitHub Actions. It exercises the actual Finishing Desk interface
+against a disposable sample manuscript and mock model: Council roles,
+author decisions, optional synthesis, explicitly approved revision and
+DOCX/EPUB/PDF browser downloads. Playwright and Chromium are installed
+**only in CI**; Writer's Python runtime remains dependency-free.
+
+This is not real-model validation or final release approval. Actual
+local-model behavior, browser usability, upgrade/recovery checks, and
+visual proofing in Word, e-readers and PDF viewers still require
+hands-on acceptance. See the
+[Release Acceptance Checklist](docs/RELEASE_ACCEPTANCE.md) for all
+remaining gates, with no claimed result for tests that have not run.
+
 ## Development branch preview — not yet a release
 
 The [open draft pull request](https://github.com/kayock/Kayock-Writer/pull/1)
