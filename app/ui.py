@@ -2562,6 +2562,12 @@ async function revisionInit(){
   await revisionSelectProject();
 }
 async function revisionSelectProject(){
+  if(revisionState.chapter &&
+      q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Discard the unsaved proposed revision to switch projects?')){
+    q('revisionProject').value=revisionState.project;
+    return;
+  }
   const project=q('revisionProject').value;
   const old=q('revisionBook').value||S.story.book||'';
   const select=q('revisionBook');
@@ -2570,9 +2576,15 @@ async function revisionSelectProject(){
   for(const item of (found&&found.books)||[])
     select.appendChild(new Option(item.title||item.id,item.id));
   if((found&&found.books||[]).some(b=>b.id===old))select.value=old;
-  await revisionOptions();
+  await revisionOptions(true);
 }
-async function revisionOptions(){
+async function revisionOptions(skipDiscardPrompt=false){
+  if(!skipDiscardPrompt && revisionState.chapter &&
+      q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Discard the unsaved proposed revision to switch books or refresh chapters?')){
+    q('revisionBook').value=revisionState.book;
+    return;
+  }
   const project=q('revisionProject').value;
   const book=q('revisionBook').value;
   revisionInvalidate();
