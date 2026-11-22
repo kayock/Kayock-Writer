@@ -18,4 +18,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python tests/run_tests.py
       - run: python tests/test_upgrade.py
+      - run: python tests/test_foundation.py
       - run: python tests/verify_kayock_writer.py
