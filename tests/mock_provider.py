@@ -140,13 +140,13 @@ class MockHandler(BaseHTTPRequestHandler):
                 for part in chunks:
                     event = {'id': 'mock', 'object': 'chat.completion.chunk',
                              'choices': [{'index': 0, 'delta': {'content': part}, 'finish_reason': None}]}
-                    self.wfile.write(('data: ' + json.dumps(event) + '\\n\\n').encode('utf-8'))
+                    self.wfile.write(('data: ' + json.dumps(event) + '\n\n').encode('utf-8'))
                     self.wfile.flush()
                     if slow:
                         time.sleep(0.04)
                 final = {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]}
-                self.wfile.write(('data: ' + json.dumps(final) + '\\n\\n'
-                                  + 'data: [DONE]\\n\\n').encode('utf-8'))
+                self.wfile.write(('data: ' + json.dumps(final) + '\n\n'
+                                  + 'data: [DONE]\n\n').encode('utf-8'))
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
