@@ -124,6 +124,22 @@ class DraftBranches:
             raise ValueError("Saved source draft differs from version history; no branch created.")
         return source, text
 
+    def verify_source(self, project_id: str, book_id: str,
+                      filename: str, chapter: str = "") -> Dict[str, Any]:
+        """Verify a source is in that book's saved history and matches its hash."""
+        with self._lock:
+            project, book, root, _ = self._scope(project_id, book_id)
+            entry, content = self._source(project, book, root, filename)
+            if chapter and str(entry.get("chapter") or "") != chapter:
+                raise ValueError("Draft belongs to a different chapter than the card.")
+            return {
+                "ok": True, "filename": filename,
+                "chapter": str(entry.get("chapter") or ""),
+                "version": entry.get("version"),
+                "sha256": _digest(content.encode("utf-8")),
+                "read_only": True,
+            }
+
     def list(self, project_id: str, book_id: str, chapter: str = "") -> Dict[str, Any]:
         with self._lock:
             project, book, _, base = self._scope(project_id, book_id)
