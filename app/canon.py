@@ -70,7 +70,8 @@ class CanonStore:
                 evidence: List[Dict[str, str]], *, chapter: str = "",
                 world_time: str = "", narrative_order: str = "",
                 known_by: List[str] | None = None,
-                learned_time: str = "") -> Dict[str, Any]:
+                learned_time: str = "", related_to: str = "",
+                relation_type: str = "") -> Dict[str, Any]:
         """Queue a fact for human review; no canon status is granted yet."""
         if kind not in KINDS:
             raise ValueError("Unrecognized canon kind")
@@ -100,6 +101,17 @@ class CanonStore:
                 seen.add(name.casefold())
         if not isinstance(learned_time, str) or len(learned_time) > 100:
             raise ValueError("Learning time must be short text.")
+        if not isinstance(related_to, str) or not isinstance(relation_type, str):
+            raise ValueError("Relationship target and type must be text.")
+        related_to, relation_type = related_to.strip(), relation_type.strip()
+        if len(related_to) > 200 or len(relation_type) > 80:
+            raise ValueError("Relationship target or type is too long.")
+        if kind != "relationship" and (related_to or relation_type):
+            raise ValueError("Explicit relationship links require kind=relationship.")
+        if bool(related_to) != bool(relation_type):
+            raise ValueError("Provide both relationship target and relationship type.")
+        if related_to and subject.strip().casefold() == related_to.casefold():
+            raise ValueError("Use two different named subjects for a relationship.")
         record = {
             "id": uuid.uuid4().hex,
             "kind": kind, "subject": subject.strip(), "claim": claim.strip(),
@@ -107,6 +119,7 @@ class CanonStore:
             "chapter": str(chapter), "world_time": str(world_time),
             "narrative_order": str(narrative_order),
             "known_by": normalized_known_by, "learned_time": learned_time.strip(),
+            "related_to": related_to, "relation_type": relation_type,
             "state": "proposed", "created": now(), "reviewed": None,
         }
         data = self._load(universe)
