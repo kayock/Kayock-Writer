@@ -47,3 +47,31 @@ jobs:
       - run: python tests/test_streaming.py
       - run: python tests/verify_kayock_writer.py
       - run: python tests/check_ui_js.py
+
+  browser-smoke:
+    name: Browser release smoke (Chromium, mock-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install CI-only Playwright (no runtime dependency)
+        run: npm install --no-save --ignore-scripts playwright@1.65.1
+      - name: Install Chromium only
+        run: npx playwright install --with-deps chromium
+      - name: Test actual browser buttons against isolated fixture
+        run: node tests/browser_release_smoke.cjs
+        env:
+          PYTHON: python
+      - name: Upload failure screenshot (synthetic fixture only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kayock-writer-browser-failure
+          path: test-results/browser-failure.png
+          if-no-files-found: ignore
