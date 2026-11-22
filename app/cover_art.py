@@ -66,6 +66,45 @@ def _dimensions(jpeg: bytes):
     raise ValueError("Could not find the cover JPEG image dimensions.")
 
 
+def _strip_private_metadata(jpeg: bytes) -> bytes:
+    """Drop common EXIF/XMP, Photoshop and comment chunks before embedding.
+
+    This intentionally keeps JPEG image data and any color profiles. It is
+    not a claim to strip all possible proprietary JPEG metadata formats.
+    """
+    chunks = [jpeg[:2]]
+    i = 2
+    while i < len(jpeg):
+        if jpeg[i] != 0xFF:
+            raise ValueError("Invalid JPEG segment marker.")
+        start = i
+        while i < len(jpeg) and jpeg[i] == 0xFF:
+            i += 1
+        if i >= len(jpeg):
+            raise ValueError("Incomplete JPEG marker.")
+        marker = jpeg[i]
+        i += 1
+        if marker == 0xDA:
+            # Preserve all entropy-coded image data untouched.
+            chunks.append(jpeg[start:])
+            return b"".join(chunks)
+        if marker == 0xD9:
+            chunks.append(jpeg[start:])
+            return b"".join(chunks)
+        if marker in (0x01, *range(0xD0, 0xD8)):
+            chunks.append(jpeg[start:i])
+            continue
+        if i + 2 > len(jpeg):
+            raise ValueError("Truncated JPEG cover segment.")
+        length = int.from_bytes(jpeg[i:i + 2], "big")
+        if length < 2 or i + length > len(jpeg):
+            raise ValueError("Invalid JPEG cover segment.")
+        end = i + length
+        if marker not in (0xE1, 0xED, 0xFE):
+            chunks.append(jpeg[start:end])
+        i = end
+    raise ValueError("Incomplete JPEG cover.")
+
 def decode_cover(data: Any) -> Dict[str, Any] | None:
     if data in (None, ""):
         return None
@@ -80,8 +119,11 @@ def decode_cover(data: Any) -> Dict[str, Any] | None:
     if not 100 <= len(raw) <= MAX_COVER_BYTES:
         raise ValueError("Cover JPEG must be 100 bytes to 2 MB.")
     width, height = _dimensions(raw)
+    sanitized = _strip_private_metadata(raw)
+    if len(sanitized) < 100 or not sanitized.endswith(b"\xff\xd9"):
+        raise ValueError("Cover JPEG was damaged during metadata filtering.")
     return {
-        "jpeg": raw, "width": width, "height": height,
-        "sha256": hashlib.sha256(raw).hexdigest(),
-        "size": len(raw),
+        "jpeg": sanitized, "width": width, "height": height,
+        "sha256": hashlib.sha256(sanitized).hexdigest(),
+        "size": len(sanitized),
     }
