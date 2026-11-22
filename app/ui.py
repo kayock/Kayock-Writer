@@ -2127,6 +2127,218 @@ async function finishingReviewClassic(){
       q('finishStatus').textContent+=' Original text remains untouched.';}
   }finally{editorialBusy=false;}
 }
+/* ==================== author-controlled Editorial Council (v2) ==================== */
+const councilState={
+  busy:false,generation:null,phase:'',baseline:null,roles:[],
+  sourceFingerprint:null,reports:[],reviewComplete:false
+};
+function councilSelectedRoles(){
+  return [
+    ['councilStory','story_architect'],
+    ['councilContinuity','continuity_editor'],
+    ['councilVoice','voice_guardian'],
+    ['councilLine','line_editor']
+  ].filter(([id])=>q(id).checked).map(([,role])=>role);
+}
+function councilKey(){
+  const p=editorialPayload();
+  delete p.mode;
+  return JSON.stringify({...p,roles:councilSelectedRoles()});
+}
+function councilReviewPayload(){
+  const p=editorialPayload();
+  delete p.mode;
+  return {...p,stage:'reviews',roles:councilSelectedRoles()};
+}
+function councilSetStatus(message,kind=''){
+  const element=q('councilStatus');
+  element.textContent=message;
+  element.className='status '+kind;
+}
+function councilRenderReports(){
+  const target=q('councilReports');
+  target.replaceChildren();
+  if(!councilState.reports.length){
+    const note=document.createElement('p');
+    note.className='small';
+    note.textContent='Reviewer feedback appears here, separately from your draft.';
+    target.appendChild(note);
+    return;
+  }
+  for(const report of councilState.reports){
+    const card=document.createElement('div');
+    card.className='card';
+    const title=document.createElement('h4');
+    const labels={
+      story_architect:'Story Architect',continuity_editor:'Continuity Editor',
+      voice_guardian:'Voice Guardian',line_editor:'Line Editor'
+    };
+    title.textContent=labels[report.role]||report.role;
+    const field=document.createElement('textarea');
+    field.className='big';
+    field.readOnly=true;
+    field.value=report.text;
+    card.appendChild(title);
+    card.appendChild(field);
+    target.appendChild(card);
+  }
+}
+function councilStateButtons(){
+  q('councilRun').disabled=councilState.busy;
+  q('councilStop').disabled=!councilState.busy||!councilState.generation;
+  q('councilSynthesize').disabled=councilState.busy||
+    !councilState.reviewComplete||
+    councilState.reports.length!==councilState.roles.length;
+}
+async function councilRun(){
+  if(councilState.busy)return;
+  const payload=councilReviewPayload();
+  if(!payload.text.trim()){
+    councilSetStatus('Paste or import a passage into the Finishing Desk first.','err');
+    return;
+  }
+  if(payload.roles.length<1||payload.roles.length>3){
+    councilSetStatus('Choose 1–3 distinct editorial roles.','err');
+    return;
+  }
+  const oneCallEach=payload.roles.length;
+  if(!confirm('Run '+oneCallEach+' sequential model call(s) using your configured endpoint? Each reviewer will see the full selected passage and any explicitly enabled references. No revisions are applied.'))return;
+  councilState.baseline=councilKey();
+  councilState.roles=payload.roles.slice();
+  councilState.reports=[];
+  councilState.sourceFingerprint=null;
+  councilState.reviewComplete=false;
+  q('councilSummary').value='';
+  councilRenderReports();
+  await councilStream(payload,'reviews');
+}
+async function councilSynthesize(){
+  if(councilState.busy||!councilState.reviewComplete||
+      councilState.reports.length!==councilState.roles.length){
+    councilSetStatus('Finish the selected reviewer reports before requesting synthesis.','err');
+    return;
+  }
+  if(councilKey()!==councilState.baseline){
+    councilState.reviewComplete=false;
+    councilStateButtons();
+    councilSetStatus('The passage, roles or references changed. Run fresh reviews before synthesizing.','err');
+    return;
+  }
+  if(!confirm('Ask the configured model for ONE additional synthesis call using the complete reviewer reports and original passage? No report is compacted or applied.'))return;
+  const payload={
+    ...councilReviewPayload(),stage:'synthesis',
+    reports:councilState.reports.map(item=>({role:item.role,text:item.text})),
+    source_fingerprint:councilState.sourceFingerprint
+  };
+  q('councilSummary').value='';
+  await councilStream(payload,'synthesis');
+}
+async function councilStop(){
+  if(!councilState.generation)return;
+  q('councilStop').disabled=true;
+  councilSetStatus('Stopping the current Council model call…');
+  const result=await api('/api/generation/'+
+    encodeURIComponent(councilState.generation)+'/cancel',{});
+  if(!result.ok)councilSetStatus(result.message||'Could not stop Council call.','err');
+}
+async function councilStream(payload,stage){
+  councilState.busy=true;
+  councilState.phase=stage;
+  councilState.generation=null;
+  councilStateButtons();
+  const live=q('councilLive');
+  live.value='';
+  councilSetStatus(stage==='reviews'?
+    'Connecting to the configured model. Selected roles run in sequence…':
+    'Building optional synthesis from full Council reports…');
+  let terminal=false;
+  try{
+    const response=await fetch('/api/writer/council/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!response.ok){
+      let detail;try{detail=await response.json();}catch(e){}
+      throw new Error(detail&&detail.message||'Council HTTP '+response.status);
+    }
+    if(!response.body)throw new Error('The browser cannot read the Council event stream.');
+    const reader=response.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer='';
+    const handleFrame=(frame)=>{
+      let name='';
+      const data=[];
+      for(const line of frame.split(/\r?\n/)){
+        if(line.startsWith('event:'))name=line.slice(6).trim();
+        if(line.startsWith('data:'))data.push(line.slice(5).replace(/^ /,''));
+      }
+      if(!name||!data.length)return;
+      let item;try{item=JSON.parse(data.join('\n'));}catch(e){
+        throw new Error('Invalid Council event payload.');
+      }
+      if(name==='start'){
+        councilState.generation=item.generation_id;
+        councilState.sourceFingerprint=item.source_fingerprint;
+        councilStateButtons();
+        councilSetStatus(stage==='reviews'?
+          'Reviewing with '+payload.roles.length+' selected role(s)…':
+          'Generating author-requested synthesis…');
+      }else if(name==='role_start'){
+        live.value='['+(item.label||item.role)+']\n';
+        councilSetStatus('Working: '+(item.label||item.role)+
+          '. No other reviewer is running concurrently.');
+      }else if(name==='role_token'){
+        live.value+=item.text||'';
+        live.scrollTop=live.scrollHeight;
+      }else if(name==='role_done'){
+        if(stage==='reviews'){
+          councilState.reports.push({role:item.role,text:item.text});
+          councilRenderReports();
+          councilSetStatus(councilState.reports.length+' of '+
+            councilState.roles.length+' reviewer(s) completed. Read-only reports.');
+        }else if(item.role==='synthesis'){
+          q('councilSummary').value=item.text;
+        }
+      }else if(name==='done'){
+        terminal=true;
+        if(stage==='reviews'){
+          councilState.reviewComplete=
+            councilState.reports.length===councilState.roles.length;
+        }
+        councilSetStatus(stage==='reviews'?
+          'Council reviews complete. Read each report; synthesis is optional and requires another click.':
+          'Synthesis complete. Feedback remains separate; no manuscript changes applied.','ok');
+      }else if(name==='cancelled'){
+        terminal=true;
+        if(stage==='reviews')councilState.reviewComplete=false;
+        councilSetStatus('Council stopped. Completed reports remain visible; partial work is unsaved.');
+      }else if(name==='error'){
+        terminal=true;
+        if(stage==='reviews')councilState.reviewComplete=false;
+        councilSetStatus(item.message||'Council model stream failed.','err');
+      }
+    };
+    while(true){
+      const item=await reader.read();
+      if(item.done)break;
+      buffer+=decoder.decode(item.value,{stream:true});
+      let match;
+      while((match=buffer.match(/\r?\n\r?\n/))){
+        const frame=buffer.slice(0,match.index);
+        buffer=buffer.slice(match.index+match[0].length);
+        handleFrame(frame);
+      }
+    }
+    if(!terminal)throw new Error('Council stream ended early. Partial text was not saved.');
+  }catch(error){
+    if(stage==='reviews')councilState.reviewComplete=false;
+    councilSetStatus(String(error.message||error),'err');
+  }finally{
+    councilState.busy=false;
+    councilState.generation=null;
+    councilStateButtons();
+  }
+}
 /* ===================== full-book assembly and downloads ===================== */
 const bookPublishState={
   sourceKey:'',entries:[],snapshot:null,
@@ -3218,6 +3430,29 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div id="finishStatus" class="status">A review uses the model endpoint configured in Settings. No model is started or reserved by this tool.</div>
     <label>Model response — review or suggested revision</label><textarea id="finishResult" class="big" readonly placeholder="Suggestions appear here, separate from your original."></textarea>
   </div>
+  <details class="card wide"><summary><strong>Editorial Council — v2.0 (author-controlled preview)</strong></summary>
+    <p class="small">Invite specialized reviewers to examine only the passage currently in the Finishing Desk. You choose 1–3 roles. Each role uses the model already configured in Settings, sequentially; one model call per role. All selected reviewers get the original text, not each other's opinion. No tools or manuscript write permissions are granted.</p>
+    <div class="row">
+      <div><label><input type="checkbox" id="councilStory" checked> Story Architect — structure, pacing, motivations</label></div>
+      <div><label><input type="checkbox" id="councilContinuity"> Continuity Editor — canon, timeline, perspective</label></div>
+      <div><label><input type="checkbox" id="councilVoice" checked> Voice Guardian — protect distinctive style</label></div>
+      <div><label><input type="checkbox" id="councilLine"> Line Editor — optional sentence-level suggestions</label></div>
+    </div>
+    <p class="small">Approved Story Bible facts and Voice DNA are included only if you enabled them above. Results are shown separately. No stage starts automatically; optional synthesis is a separate model call and never rewrites or accepts a draft.</p>
+    <div class="row">
+      <button class="btn primary" id="councilRun" onclick="councilRun()">Run selected Council reviews</button>
+      <button class="btn" id="councilStop" onclick="councilStop()" disabled>Stop Council</button>
+      <button class="btn" id="councilSynthesize" onclick="councilSynthesize()" disabled>Synthesize completed reports (optional)</button>
+    </div>
+    <div class="status" id="councilStatus">No Council run. Original writing remains untouched.</div>
+    <label>Current reviewer stream (read-only)</label>
+    <textarea id="councilLive" class="big" readonly placeholder="Live reviewer feedback appears here."></textarea>
+    <h4>Completed independent reviews</h4>
+    <div id="councilReports"><p class="small">Reviewer reports will appear here after each role finishes.</p></div>
+    <label>Optional Council synthesis (read-only)</label>
+    <textarea id="councilSummary" class="big" readonly placeholder="No synthesis runs unless you request it separately."></textarea>
+    <p class="small">Reports and synthesis exist only in this browser session; they are not automatically saved, applied, published or added to canon. Copy passages manually if you choose to use them. Editing the input or selected roles after review requires fresh reviews before synthesis.</p>
+  </details>
   <div class="card wide"><h3>Full-Book Assembly &amp; Publishing</h3>
     <p class="small">Assemble existing saved Story Forge chapter drafts in exactly the order you choose. Pick which chapters to include and which saved version of each to publish. Preview the assembled manuscript before downloading. Original drafts and version history remain untouched.</p>
     <div class="row">
