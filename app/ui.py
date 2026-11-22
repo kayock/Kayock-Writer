@@ -558,6 +558,46 @@ async function reviewCanonFact(factId,decision){
   toast(d.message||(d.ok?'Fact '+decision+'.':'Review failed.'),d.ok?'ok':'err');
   if(d.ok)renderCanon();
 }
+async function previewCanonContext(){
+  const target=q('nfCanonPreview');
+  if(!S.novel.active){target.textContent='Load or save a universe first.';return;}
+  target.textContent='Retrieving relevant approved facts…';
+  const d=await api('/api/novelforge/canon/context',{
+    universe:S.novel.active,query:q('nfCanonSearch').value,
+    limit:Number(q('nfCanonMax').value)
+  });
+  if(!d.ok){target.textContent=d.message||'Retrieval failed.';return;}
+  const facts=d.facts||[];
+  const rows=facts.map(f=>'<div class="card"><strong>'+esc(f.subject)+'</strong> — '+esc(f.claim)+
+    '<div class="small">Relevance '+f.relevance_score+' · '+esc(f.kind)+' · Fact '+esc(f.id)+'</div>'+
+    (f.evidence||[]).map(e=>'<div class="small">Source '+esc(e.source)+': “'+esc(e.quote)+'”</div>').join('')+
+    '</div>').join('');
+  target.innerHTML='<div class="status">'+d.selected_total+' of '+d.approved_total+
+    ' approved facts selected; '+d.matched_total+' relevant matches. Estimated reference tokens: '+
+    d.estimated_tokens+' (advisory only; model context settings unchanged).</div>'+
+    (rows||'<p>No approved facts match this passage.</p>')+
+    '<details><summary>View copyable reference context</summary>'+
+    '<textarea readonly class="big">'+esc(d.context_text||'No matching approved facts.')+'</textarea></details>';
+}
+async function checkCanonDraft(){
+  const target=q('nfCanonWarnings');
+  if(!S.novel.active){target.textContent='Load or save a universe first.';return;}
+  const draft=q('nfCanonDraft').value;
+  if(!draft.trim()){target.textContent='Paste a draft excerpt first.';return;}
+  target.textContent='Checking explicit continuity tensions…';
+  const d=await api('/api/novelforge/canon/continuity',{
+    universe:S.novel.active,text:draft});
+  if(!d.ok){target.textContent=d.message||'Continuity check failed.';return;}
+  const rows=(d.alerts||[]).map(a=>'<div class="card"><strong>Possible tension: '+
+    esc(a.subject)+'</strong><p>'+esc(a.draft_excerpt)+'</p>'+
+    '<div class="small">Approved reference: '+esc(a.approved_claim)+'</div>'+
+    (a.evidence||[]).map(e=>'<div class="small">'+esc(e.source)+': “'+esc(e.quote)+'”</div>').join('')+
+    '<div class="small">'+esc(a.explanation)+'</div></div>').join('');
+  target.innerHTML='<div class="status">'+d.alert_count+' possible tension(s) in '+
+    d.reviewed_approved_facts+' approved facts. These are suggestions, not proven errors.'+
+    ' Your passage was not changed.</div>'+
+    (rows||'<p>No explicit opposite statements found. This does not prove full continuity.</p>');
+}
 function updateNovelCounts(){
   const cnt=list=>q(list).value.split('\n').filter(x=>x.trim()).length;
   q('nfCounts').innerHTML=['characters','locations','artifacts','timeline','mysteries','scenes']
@@ -1028,7 +1068,17 @@ async function testModelConfig(){
 }
 
 /* ============================ optional finishing desk ============================ */
-function renderFinishing(){} // keep unsaved editing text when moving between rooms
+async function renderFinishing(){
+  // Preserve unsaved editor text and the author's current checkbox/selection.
+  const selector=q('finishCanonUniverse');
+  const selected=selector.value;
+  const result=await api('/api/novelforge/list');
+  const universes=result.ok?(result.universes||[]):[];
+  selector.innerHTML='<option value="">Select a saved universe…</option>'+
+    universes.map(u=>'<option value="'+esc(u.name)+'">'+esc(u.universe)+'</option>').join('');
+  if(universes.some(u=>u.name===selected))selector.value=selected;
+  else if(S.novel.active && universes.some(u=>u.name===S.novel.active))selector.value=S.novel.active;
+}
 function finishingImport(source){
   const ids={
     'studio':'poemResult', 'polisher':'poemPolisherInput', 'polished':'poemPolishedResult',
@@ -1050,9 +1100,15 @@ function finishingImport(source){
 let editorialGeneration=null;
 let editorialBusy=false;
 function editorialPayload(){
-  return {text:q('finishText').value,mode:q('finishMode').value,
+  const payload={text:q('finishText').value,mode:q('finishMode').value,
     title:q('finishTitle').value,writing_type:q('finishType').value,
     direction:q('finishDirection').value};
+  if(q('finishUseCanon').checked){
+    payload.use_canon=true;
+    payload.universe=q('finishCanonUniverse').value;
+    payload.canon_limit=Number(q('finishCanonLimit').value);
+  }
+  return payload;
 }
 async function finishingReview(){
   if(editorialBusy)return;
@@ -1527,6 +1583,19 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <button class="btn primary" onclick="proposeCanonFact()">Submit for review</button>
     </details>
   </div>
+  <div class="card wide"><h3>Canon Retrieval &amp; Continuity Workshop</h3>
+    <p class="small">Read-only. Searches approved facts with source citations, then checks narrow explicit contradictions in an unsaved passage. It does not rewrite, save or automatically approve anything.</p>
+    <label>Search passage or character / topic</label><textarea id="nfCanonSearch" placeholder="A character, scene, plot element, or a draft excerpt…"></textarea>
+    <div class="row">
+      <div><label>Maximum approved facts (1–200)</label><input id="nfCanonMax" type="number" min="1" max="200" value="12"></div>
+      <div class="fixed"><button class="btn primary" onclick="previewCanonContext()">Retrieve approved facts</button></div>
+    </div>
+    <div id="nfCanonPreview" class="status">Load a universe and search approved canon.</div>
+    <label>Draft excerpt for continuity review (unsaved)</label>
+    <textarea id="nfCanonDraft" class="big" placeholder="Paste a passage. Compare it against approved facts, without modifying either."></textarea>
+    <button class="btn" onclick="checkCanonDraft()">Check possible continuity tensions</button>
+    <div id="nfCanonWarnings" class="status">A narrow, evidence-linked check for opposing character states or scar details. Time and point of view may resolve apparent differences.</div>
+  </div>
   <div class="card wide"><h3>Story Bible Export</h3>
     <div class="row"><div><label>Readiness note</label><input id="nfReadiness" type="text" placeholder="draft, review, publish-ready…"></div>
     <div class="fixed"><button class="btn primary" onclick="exportStoryBible()">Export Story Bible (JSON + Markdown + Text)</button></div></div>
@@ -1719,6 +1788,14 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <option value="weaver">The Weaver</option></select></div>
       <div class="fixed"><button class="btn" onclick="finishingImport(q('finishSource').value)">Copy into finishing desk</button></div></div>
     <label>Paste or edit the passage here</label><textarea id="finishText" class="big" placeholder="Your original passage stays unchanged in its Forge."></textarea>
+    <details><summary>Optional Story Bible references — author controlled</summary>
+      <p class="small">Off by default. When enabled, editorial requests can reference only approved, relevant facts from the selected universe. Your original draft is never changed automatically.</p>
+      <label><input id="finishUseCanon" type="checkbox"> Include approved canon in this review</label>
+      <div class="row">
+        <div><label>Saved universe</label><select id="finishCanonUniverse"><option value="">Select a saved universe…</option></select></div>
+        <div><label>Maximum relevant facts (not the model context window)</label><input id="finishCanonLimit" type="number" min="1" max="200" value="12"></div>
+      </div>
+    </details>
     <div class="row"><div><label>Editorial mode</label><select id="finishMode">
       <option value="review">Critique: actionable notes only</option>
       <option value="suggestion">Optional revised passage (never auto-apply)</option></select></div>
