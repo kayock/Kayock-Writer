@@ -195,7 +195,8 @@ class ContextHttpTests(unittest.TestCase):
         self.assertIn("event: done", events)
         self.assertEqual(seen[-1][0], "stream")
         self.assertIn("Elena is alive", seen[-1][1])
-        self.assertFalse(list((Path(self.tmp.name) / "writing").rglob("*.md")) is None)
+        # Editorial endpoints never create draft files or edit the universe.
+        self.assertEqual(list((Path(self.tmp.name) / "writing").rglob("Drafts/*.md")), [])
 
     def test_missing_universe_requires_explicit_selection(self):
         with self.assertRaises(urllib.error.HTTPError) as error:
