@@ -31,6 +31,7 @@ from .provider import Cancellation, Provider
 from .storage import Store
 from .storyforge import StoryForge
 from .scene_board import SceneBoard
+from .series_outline import SeriesOutline
 from .draft_branches import DraftBranches
 from .weaver import Weaver
 
@@ -65,6 +66,7 @@ class App:
             default_author=cfg.default_author,
         )
         self.scene_board = SceneBoard(self.store, self.storyforge)
+        self.series_outline = self.scene_board.outline
         self.draft_branches = DraftBranches(self.store, self.storyforge)
 
     def status(self) -> Dict[str, Any]:
@@ -497,6 +499,9 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(app.draft_branches.list, q1('project_id'),
                         q1('book_id'), q1('chapter'))
             return
+        if path == '/api/writer/story/series_outline':
+            self._guard(app.series_outline.read, q1('project_id'))
+            return
         if path == '/api/writer/story/scene_board':
             self._guard(app.scene_board.read, q1('project_id'), q1('book_id'))
             return
@@ -619,6 +624,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/writer/story/branches/compare':
             self._guard(app.draft_branches.compare_source, d.get('project_id'),
                         d.get('book_id'), d.get('branch_id'))
+            return
+        if path == '/api/writer/story/series_outline/change':
+            self._guard(app.series_outline.change, d)
             return
         if path == '/api/writer/story/scene_board/change':
             self._guard(app.scene_board.change, d)
