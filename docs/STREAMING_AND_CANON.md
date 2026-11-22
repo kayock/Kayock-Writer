@@ -278,6 +278,66 @@ explicitly truncated; proposed/rejected facts never appear. This is the
 first relationship visualization, not the complete v1.4 corkboard, scene
 graph, or branching-manuscript system.
 
+## Visual Scene Corkboard (v1.4 initial scene-planning milestone)
+
+Story Forge now has a **Visual Scene Corkboard** room for each existing project
+and book. It stores a **separate**, manually edited planning board beneath
+`<project>/Scenes/Boards/<book>.json`, rather than rewriting existing
+chapter cards, manuscript prose, versioned drafts or the Story Bible.
+
+- Add cards with title, chapter label, POV, location, summary and story beats.
+- Arrange the cards across Ideas, Outlined, Drafting, Revising, Ready and
+  Parked lanes. Use drag-and-drop or visible Move, Up and Down controls.
+- Edit cards deliberately; parking preserves a card for later rather than
+  deleting it. There is no automatic transition or AI-generated scene.
+- A board read is read-only. Every modification requires the latest
+  `expected_revision` SHA-256, so an outdated browser tab cannot silently
+  overwrite a newer plan. Each subsequent save backs up the preceding
+  board JSON; writes are atomic.
+- The board refuses corrupt JSON, unknown books/projects, unsupported fields,
+  invalid lane moves or unsafe paths. Projects' existing scene files are
+  not imported or automatically rewritten.
+
+API: GET `/api/writer/story/scene_board?project_id=...&book_id=...`;
+POST `/api/writer/story/scene_board/change` with `action` `add`,
+`update`, `move`, or `park`, current `expected_revision`,
+`project_id`, `book_id`, and the requested card fields/IDs.
+
+This is a **planning corkboard**, not a full series hierarchy, multi-user
+collaboration system or automatic scene-to-prose publisher.
+
+## Independent draft branches (v1.4 alternative manuscript milestone)
+
+The existing **Draft Workspace** now has **Alternative Draft Branches**.
+The author chooses a real version listed in the existing Story Forge
+chapter-draft manifest, names an alternative, and creates a separate branch
+below `<project>/Branches/<book>/<branch-id>/`.
+
+- Branch creation copies the saved chapter prose body into a new independent
+  version; the original draft and its existing version history are unchanged.
+- Loading a branch displays its latest text only in the alternative editor.
+  Saving requires an explicit confirmation and appends a new immutable
+  alternative version plus a backed-up branch manifest.
+- The author can preview a unified diff between the latest branch version
+  and its original saved source. A branch does **not** merge back, publish,
+  overwrite canonical drafts, modify project manifests, or change prose
+  manuscripts automatically.
+- Source files must match their recorded history SHA-256. Alternative files
+  also verify their content hashes. Invalid names, foreign project/book
+  paths, damaged manifests and stale branch revisions are rejected.
+- Every branch is a separate history; existing draft-save, continuation,
+  editor gates, approval phrases and automatic context settings are unchanged.
+
+API: GET `/api/writer/story/branches?project_id=...&book_id=...&chapter=...`;
+POST endpoints `/api/writer/story/branches/create`,
+`/api/writer/story/branches/read`,
+`/api/writer/story/branches/append`, and
+`/api/writer/story/branches/compare`.
+
+**Limits:** No automatic branch promotion, three-way merge, character
+retconning, AI drafting in branches, or multi-device conflict reconciliation
+is claimed. Those would require separate review and acceptance.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -297,6 +357,8 @@ python tests/test_canon_api.py
 python tests/test_context_engine.py
 python tests/test_timeline.py
 python tests/test_relationships.py
+python tests/test_scene_board.py
+python tests/test_draft_branches.py
 python tests/test_model_capabilities.py
 python tests/test_model_profiles.py
 python tests/test_streaming.py
