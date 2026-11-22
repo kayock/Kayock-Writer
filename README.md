@@ -30,6 +30,14 @@ as new chapter versions. Its Finishing Desk now also offers private,
 opt-in Voice DNA references, developmental/voice audit modes, and
 DOCX/EPUB publishing.
 
+**New v2.0 preview — Editorial Council:** In the Finishing Desk, select
+up to three specialized reviewers and explicitly run their independent,
+sequential reviews through the already configured model. Read each
+report in its own panel, stop the run if needed, and optionally request
+one separately confirmed synthesis. No reviewer automatically starts
+another project, changes canon, edits a manuscript, or saves a draft.
+Each chosen role makes a full model call; synthesis makes one more.
+
 **New publishing workflow under development:** Open
 **Editorial & Craft Handoff → Full-Book Assembly & Publishing**,
 choose a Story Forge project and book, select the exact saved
