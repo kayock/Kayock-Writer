@@ -60,7 +60,8 @@ def _wrap(text: str, limit: int) -> List[str]:
     return lines
 
 
-def make_pdf(title: str, author: str, chapters: List[Dict[str, str]]) -> bytes:
+def make_pdf(title: str, author: str, chapters: List[Dict[str, str]],
+             cover: Dict | None = None) -> bytes:
     if not chapters:
         raise ValueError("PDF needs at least one passage.")
     for item in (title, author):
@@ -70,21 +71,32 @@ def make_pdf(title: str, author: str, chapters: List[Dict[str, str]]) -> bytes:
         _pdf_chars(c["text"])
 
     pages: List[List[bytes]] = [[]]
+    if cover:
+        # Image bytes are already dimension-checked by the cover validator.
+        width, height = cover["width"], cover["height"]
+        scale = min(405 / width, 305 / height)
+        draw_w, draw_h = width * scale, height * scale
+        x, y = (PAGE_W - draw_w) / 2, 420
+        pages[0].append(
+            ("q %.3f 0 0 %.3f %.3f %.3f cm /Im1 Do Q\n"
+             % (draw_w, draw_h, x, y)).encode("ascii")
+        )
+    title_y = 375 if cover else 475
     title_lines = _wrap(title, 40)
     for i, line in enumerate(title_lines):
         size = 18
         # Courier-Bold: glyph advance = 0.6*point size.
         pages[0].append(_text(line, max(LEFT, (PAGE_W - len(line)*size*.6)/2),
-                              475-i*26, "F2", size))
+                              title_y-i*26, "F2", size))
     if author:
         for i, line in enumerate(_wrap(author, 68)):
             pages[0].append(_text(
                 line, max(LEFT, (PAGE_W - len(line) * 11 * .6) / 2),
-                390 - len(title_lines) * 5 - i * 18, "F1", 11
+                title_y - len(title_lines) * 26 - 30 - i * 18, "F1", 11
             ))
 
     for chapter in chapters:
-        # Every new chapter starts on a new page, never overwriting the source.
+        # Every new chapter begins on a fresh page.
         page: List[bytes] = []
         pages.append(page)
         y = PAGE_H - TOP
@@ -93,17 +105,34 @@ def make_pdf(title: str, author: str, chapters: List[Dict[str, str]]) -> bytes:
             y -= 23
         y -= 25
         for paragraph in chapter["text"].replace("\r\n","\n").replace("\r","\n").split("\n\n"):
-            for line in _wrap(paragraph, BODY_CHARS):
-                if y < BOTTOM+15:
+            lines = _wrap(paragraph, BODY_CHARS)
+            # A short paragraph should not start with one orphaned line
+            # at the page bottom. Longer paragraphs keep at least their
+            # final two lines together if they can fit.
+            if len(lines) >= 2 and y - 2 * BODY_LEADING < BOTTOM + 15:
+                page = []
+                pages.append(page)
+                y = PAGE_H - TOP
+                page.append(_text(
+                    chapter["title"][:55], LEFT, PAGE_H - 44, "F2", 9
+                ))
+            for i, line in enumerate(lines):
+                remaining = len(lines) - i
+                if (y < BOTTOM + 15 or
+                        (remaining >= 2 and remaining == 2
+                         and y - BODY_LEADING < BOTTOM + 15)):
                     page = []
                     pages.append(page)
                     y = PAGE_H - TOP
+                    page.append(_text(
+                        chapter["title"][:55], LEFT, PAGE_H - 44, "F2", 9
+                    ))
                 if line:
                     page.append(_text(line, LEFT, y, "F1", BODY_SIZE))
                 y -= BODY_LEADING
             y -= 9
-    for number, page in enumerate(pages, start=1):
-        # Footer is not placed near body text. Page 1 is the title page.
+    for number, page in enumerate(pages[1:], start=1):
+        # No page number on the title/cover page. Other pages are numbered.
         page.append(_text(str(number), PAGE_W/2-4, 43, "F1", 9))
 
     objects = {
@@ -112,18 +141,33 @@ def make_pdf(title: str, author: str, chapters: List[Dict[str, str]]) -> bytes:
         4: b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>",
     }
     kids = []
+    image_object_id = 5 + 2 * len(pages) if cover else None
     for i, page in enumerate(pages):
         page_id, stream_id = 5+2*i, 6+2*i
         kids.append(str(page_id) + " 0 R")
         stream = b"".join(page)
+        xobjects = (
+            " /XObject << /Im1 " + str(image_object_id) + " 0 R >>"
+            if cover and i == 0 else ""
+        )
         objects[page_id] = (
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            "/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> "
+            "/Resources << /Font << /F1 3 0 R /F2 4 0 R >>" +
+            xobjects + " >> "
             "/Contents " + str(stream_id) + " 0 R >>"
         ).encode("ascii")
         objects[stream_id] = (
             b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" +
             stream + b"endstream"
+        )
+    if cover:
+        raw_image = cover["jpeg"]
+        objects[image_object_id] = (
+            ("<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+             "/ColorSpace /DeviceRGB /BitsPerComponent 8 "
+             "/Filter /DCTDecode /Length %d >>\nstream\n"
+             % (cover["width"], cover["height"], len(raw_image))).encode("ascii")
+            + raw_image + b"\nendstream"
         )
     objects[2] = (
         "<< /Type /Pages /Kids [" + " ".join(kids) + "] /Count " + str(len(pages)) + " >>"
