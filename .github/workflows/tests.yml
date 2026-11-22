@@ -26,6 +26,7 @@ jobs:
       - run: python tests/test_upgrade.py
       - run: python tests/test_foundation.py
       - run: python tests/test_novel_storage_safety.py
+      - run: python tests/test_recovery.py
       - run: python tests/test_canon_api.py
       - run: python tests/test_context_engine.py
       - run: python tests/test_model_capabilities.py
