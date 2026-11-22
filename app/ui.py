@@ -2128,7 +2128,43 @@ async function finishingReviewClassic(){
   }finally{editorialBusy=false;}
 }
 /* ===================== full-book assembly and downloads ===================== */
-const bookPublishState={sourceKey:'',entries:[],snapshot:null};
+const bookPublishState={sourceKey:'',entries:[],snapshot:null,coverBase64:'',coverName:''};
+async function bookPublishCoverChange(){
+  const input=q('bookPublishCover');
+  const file=input.files&&input.files[0];
+  bookPublishState.coverBase64='';
+  bookPublishState.coverName='';
+  bookPublishInvalidate();
+  if(!file){q('bookPublishCoverStatus').textContent='No cover selected.';return;}
+  if(file.size>2*1024*1024||file.size<100 ||
+      !/\.jpe?g$/i.test(file.name) ||
+      (file.type&&file.type!=='image/jpeg')){
+    q('bookPublishCoverStatus').textContent='Choose an RGB JPEG (.jpg or .jpeg) up to 2 MB.';
+    input.value='';
+    return;
+  }
+  try{
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    // Work in bounded chunks to avoid large apply(...) argument lists.
+    let raw='';
+    for(let i=0;i<bytes.length;i+=16384)
+      raw+=String.fromCharCode(...bytes.subarray(i,i+16384));
+    bookPublishState.coverBase64=btoa(raw);
+    bookPublishState.coverName=file.name;
+    q('bookPublishCoverStatus').textContent='Selected '+file.name+
+      ' ('+Math.round(file.size/1024)+' KB). Preview will validate image dimensions and strip common private metadata. File is not saved to Writer.';
+  }catch(error){
+    q('bookPublishCoverStatus').textContent='Unable to read selected JPEG: '+String(error);
+    input.value='';
+  }
+}
+function bookPublishClearCover(){
+  q('bookPublishCover').value='';
+  bookPublishState.coverBase64='';
+  bookPublishState.coverName='';
+  bookPublishInvalidate();
+  q('bookPublishCoverStatus').textContent='No cover selected.';
+}
 function bookPublishInvalidate(){
   bookPublishState.snapshot=null;
   q('bookPublishPreviewStatus').textContent='Chapter choices or metadata changed. Preview again before exporting.';
@@ -2235,6 +2271,7 @@ function bookPublishRequest(){
     book_id:q('bookPublishBook').value,
     title:q('bookPublishTitle').value,
     author:q('bookPublishAuthor').value,
+    cover_jpeg_base64:bookPublishState.coverBase64,
     chapters:bookPublishState.entries.filter(e=>e.include).map(e=>({
       chapter:e.chapter,filename:e.filename
     }))
@@ -2262,6 +2299,8 @@ async function bookPublishPreview(){
   q('bookPublishPreviewStatus').textContent=
     'READ-ONLY PREVIEW — '+result.title+
     '\nChapters: '+result.chapter_count+' · Total words: '+result.total_words+
+    '\nCover: '+(result.cover_present?
+      ('author-supplied RGB JPEG ('+result.cover_dimensions.join(' × ')+')'):'none')+
     '\n\n'+result.chapters.map((c,i)=>(
       (i+1)+'. '+c.title+' · v'+c.version+' · '+c.words+' words'+
       '\n    '+c.excerpt.replace(/\s+/g,' ').slice(0,140)
@@ -3119,6 +3158,12 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div><label>Book title</label><input id="bookPublishTitle" maxlength="200" oninput="bookPublishInvalidate()"></div>
       <div><label>Author</label><input id="bookPublishAuthor" maxlength="160" oninput="bookPublishInvalidate()"></div>
     </div>
+    <div class="row">
+      <div><label>Optional author-supplied cover artwork (RGB JPEG, max 2 MB)</label>
+        <input id="bookPublishCover" type="file" accept=".jpg,.jpeg,image/jpeg" onchange="bookPublishCoverChange()"></div>
+      <div class="fixed"><button class="btn" onclick="bookPublishClearCover()">Clear cover</button></div>
+    </div>
+    <div id="bookPublishCoverStatus" class="status">No cover selected. Cover files are used for this export only, not stored in Writer.</div>
     <div id="bookPublishStatus" class="status">Choose an existing Story Forge project and book.</div>
     <h4>Saved chapters — selection and reading order</h4>
     <div id="bookPublishChoices"></div>
