@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from app.canon import CanonStore
 from app.storage import Store, atomic_write_text, jread, jwrite
