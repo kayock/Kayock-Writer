@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .recovery import UniverseRecovery
 from .model_profiles import ModelProfiles
+from .relationships import build_graph
 from .timeline import chronology, character_knowledge
 from .poetry import PoetryForge
 from .provider import Cancellation, Provider
@@ -166,6 +167,19 @@ class App:
         result['universe'] = universe
         return result
 
+    def canon_relationships(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        limit = d.get('max_edges', 150)
+        if type(limit) is not int:
+            raise ValueError('Relationship edge limit must be a whole number.')
+        graph = build_graph(
+            self.canon.approved_context(universe),
+            focus=d.get('focus', ''),
+            max_edges=limit,
+        )
+        graph['universe'] = universe
+        return graph
+
     def canon_chronology(self, d: Dict[str, Any]) -> Dict[str, Any]:
         universe = self._existing_universe(d.get('universe', ''))
         result = chronology(self.canon.approved_context(universe))
@@ -219,6 +233,8 @@ class App:
             narrative_order=str(d.get('narrative_order') or ''),
             known_by=d.get('known_by', []),
             learned_time=str(d.get('learned_time') or ''),
+            related_to=d.get('related_to', ''),
+            relation_type=d.get('relation_type', ''),
         )
 
     def rename_universe_with_canon(self, d: Dict[str, Any]) -> Dict[str, Any]:
@@ -569,6 +585,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/canon/chronology':
             self._guard(app.canon_chronology, d)
+            return
+        if path == '/api/novelforge/canon/relationships':
+            self._guard(app.canon_relationships, d)
             return
         if path == '/api/novelforge/canon/knowledge':
             self._guard(app.canon_knowledge, d)
