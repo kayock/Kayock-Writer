@@ -159,6 +159,31 @@ async function exercise(page, url) {
   requireText(preview, 'Chapter One · v2', 'Verified book preview');
   assert.equal(await page.locator('#bookPublishDocx').isEnabled(), true);
 
+  // Delay a real preview HTTP request. If the author changes metadata
+  // before the response arrives, the stale response must not enable export.
+  let releaseBookPreview, sawBookPreview;
+  const previewHeld = new Promise(resolve => { releaseBookPreview = resolve; });
+  const previewIntercepted = new Promise(resolve => { sawBookPreview = resolve; });
+  await page.route('**/api/writer/publishing/book/preview', async route => {
+    sawBookPreview();
+    await previewHeld;
+    await route.continue();
+  });
+  const inFlightPreview = page.getByRole('button', { name: 'Preview exact chapter selection' }).click();
+  await previewIntercepted;
+  const titleBeforeRace = await page.locator('#bookPublishTitle').inputValue();
+  await page.locator('#bookPublishTitle').fill('Changed while network preview is pending');
+  releaseBookPreview();
+  await inFlightPreview;
+  await waitStatus(page, 'bookPublishPreviewStatus', 'changed while previewing');
+  assert.equal(await page.locator('#bookPublishDocx').isDisabled(), true,
+               'Stale in-flight preview unexpectedly enabled export');
+  await page.unroute('**/api/writer/publishing/book/preview');
+  await page.locator('#bookPublishTitle').fill(titleBeforeRace);
+  await page.getByRole('button', { name: 'Preview exact chapter selection' }).click();
+  await waitStatus(page, 'bookPublishPreviewStatus', 'READ-ONLY PREVIEW');
+  process.stdout.write('OK browser preview race: outdated response cannot authorize download\n');
+
   // Changing metadata after preview disables downloads until re-preview.
   const priorTitle = await page.locator('#bookPublishTitle').inputValue();
   await page.locator('#bookPublishTitle').fill('Changed After Preview');
@@ -173,6 +198,32 @@ async function exercise(page, url) {
   requireText(await page.locator('#bookPublishDownloadStatus').textContent(),
               'no manuscripts were edited', 'Publishing status');
   process.stdout.write('OK browser book publishing: verified chapter v2, DOCX EPUB PDF\n');
+
+  // A revision-save response arriving after further typing must not
+  // overwrite the author's newly entered unsaved proposal in the browser.
+  await page.locator('#revisionCandidate').fill(REVISION + '\\nA revised coda.');
+  await page.getByRole('button', { name: 'Preview precise changes' }).click();
+  await waitStatus(page, 'revisionStatus', 'Read the diff');
+  await page.locator('#revisionApproval').check();
+  let releaseSave, sawSave;
+  const saveHeld = new Promise(resolve => { releaseSave = resolve; });
+  const saveIntercepted = new Promise(resolve => { sawSave = resolve; });
+  await page.route('**/api/writer/revision/accept', async route => {
+    sawSave();
+    await saveHeld;
+    await route.continue();
+  });
+  const savePending = page.locator('#revisionApproveButton').click();
+  await saveIntercepted;
+  const unsavedNewer = REVISION + '\\nAn unsaved final thought.';
+  await page.locator('#revisionCandidate').fill(unsavedNewer);
+  releaseSave();
+  await savePending;
+  await waitStatus(page, 'revisionStatus', 'was NOT replaced');
+  assert.equal(await page.locator('#revisionCandidate').inputValue(), unsavedNewer,
+               'Late save result discarded the newer unsaved revision');
+  await page.unroute('**/api/writer/revision/accept');
+  process.stdout.write('OK browser save race: newer unsaved proposal is preserved\n');
 
   // Ensure user-entered text remains unchanged throughout review/publishing.
   assert.equal(await page.locator('#finishText').inputValue(), ORIGINAL);
