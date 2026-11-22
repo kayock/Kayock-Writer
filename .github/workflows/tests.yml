@@ -33,6 +33,8 @@ jobs:
       - run: python tests/test_relationships.py
       - run: python tests/test_scene_board.py
       - run: python tests/test_draft_branches.py
+      - run: python tests/test_series_outline.py
+      - run: python tests/test_branch_accept.py
       - run: python tests/test_model_capabilities.py
       - run: python tests/test_model_profiles.py
       - run: python tests/test_streaming.py
