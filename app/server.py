@@ -187,6 +187,11 @@ class App:
             raise ValueError('Save or load the universe before editing canon.')
         return p.stem
 
+    def universe_write(self, function, *args):
+        """Serialize app HTTP mutations with restore previews and replacement."""
+        with self.recovery._lock:
+            return function(*args)
+
     def recovery_backups(self, name: str) -> Dict[str, Any]:
         return self.recovery.list_backups(name)
 
@@ -525,16 +530,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         # Novel Forge
         if path == '/api/novelforge/save':
-            self._guard(app.novelforge.save_universe, d)
+            self._guard(app.universe_write, app.novelforge.save_universe, d)
             return
         if path == '/api/novelforge/duplicate':
-            self._guard(app.novelforge.duplicate_universe, d)
+            self._guard(app.universe_write, app.novelforge.duplicate_universe, d)
             return
         if path == '/api/novelforge/rename':
-            self._guard(app.rename_universe_with_canon, d)
+            self._guard(app.universe_write, app.rename_universe_with_canon, d)
             return
         if path == '/api/novelforge/delete':
-            self._guard(app.delete_universe_preserving_canon, d.get('name', ''))
+            self._guard(app.universe_write, app.delete_universe_preserving_canon, d.get('name', ''))
             return
         if path == '/api/novelforge/export':
             self._guard(app.novelforge.export_story_bible, d)
