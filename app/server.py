@@ -23,6 +23,7 @@ from .editorial import editorial_review, prepare_editorial
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .recovery import UniverseRecovery
+from .timeline import chronology, character_knowledge
 from .poetry import PoetryForge
 from .provider import Cancellation, Provider
 from .storage import Store
@@ -157,7 +158,23 @@ class App:
     def canon_continuity_check(self, d: Dict[str, Any]) -> Dict[str, Any]:
         universe = self._existing_universe(d.get('universe', ''))
         result = check_continuity(
-            d.get('text'), self.canon.approved_context(universe)
+            d.get('text'), self.canon.approved_context(universe),
+            world_time=d.get('world_time', ''),
+        )
+        result['universe'] = universe
+        return result
+
+    def canon_chronology(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        result = chronology(self.canon.approved_context(universe))
+        result['universe'] = universe
+        return result
+
+    def canon_knowledge(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        result = character_knowledge(
+            self.canon.approved_context(universe),
+            d.get('character'), d.get('at_world_time', ''),
         )
         result['universe'] = universe
         return result
@@ -193,6 +210,8 @@ class App:
             chapter=str(d.get('chapter') or ''),
             world_time=str(d.get('world_time') or ''),
             narrative_order=str(d.get('narrative_order') or ''),
+            known_by=d.get('known_by', []),
+            learned_time=str(d.get('learned_time') or ''),
         )
 
     def rename_universe_with_canon(self, d: Dict[str, Any]) -> Dict[str, Any]:
@@ -537,6 +556,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/canon/continuity':
             self._guard(app.canon_continuity_check, d)
+            return
+        if path == '/api/novelforge/canon/chronology':
+            self._guard(app.canon_chronology, d)
+            return
+        if path == '/api/novelforge/canon/knowledge':
+            self._guard(app.canon_knowledge, d)
             return
         # Story Forge actions
         story_routes = {
