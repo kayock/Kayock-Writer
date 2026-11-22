@@ -52,9 +52,11 @@ class FakeProvider:
         elif self.outcome=="unfinished":
             return
         else:
+            if self.trigger_cancel is not None and len(self.calls)==self.trigger_cancel:
+                cancellation.cancel()
+                yield {"type":"cancelled"}
+                return
             yield {"type":"done"}
-        if self.trigger_cancel is not None and len(self.calls)==self.trigger_cancel:
-            cancellation.cancel()
 
 
 class CouncilUnitTests(unittest.TestCase):
