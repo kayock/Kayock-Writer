@@ -1,0 +1,860 @@
+# Kayock Writer — Streaming + Living Canon (development branch)
+
+This document describes the first implemented slices of the v1.2/v1.3 upgrade.
+The application version is **not** bumped and the branch remains a draft until
+all planned release acceptance criteria are met.
+
+## Live editorial review
+
+The Finishing Desk now offers:
+
+- **Stream review**: streamed model output appears token by token in the
+  read-only result area. Uses the same prompts, validation, model, timeout,
+  and token budget as Classic review.
+- **Stop**: asks the server to cancel the current generation, interrupting
+  the upstream HTTP connection where supported.
+- **Classic review**: retains the original non-streaming endpoint and behavior.
+
+The original passage is never overwritten or saved by either endpoint.
+Partial responses are only in the browser's unsaved result area.
+
+### Protocol
+
+POST `/api/writer/editorial/stream` with the same JSON as
+`/api/writer/editorial/review`:
+
+```json
+{
+  "text": "An original passage...",
+  "title": "Chapter draft",
+  "writing_type": "prose",
+  "mode": "review",
+  "direction": "Focus on pacing and preserve voice."
+}
+```
+
+The response is `text/event-stream`. Event types:
+
+- `start`: contains `generation_id`.
+- `token`: contains a `text` delta.
+- `done`: completed successfully, `saved: false`, `source_unchanged: true`.
+- `cancelled`: stopped before completion; partial text is not saved.
+- `error`: rejected or interrupted stream; never report successful completion.
+
+POST `/api/generation/{generation_id}/cancel` (empty JSON acceptable) to
+cancel an active generation. A stopped or unknown generation returns
+`ok: false`.
+
+Streaming currently applies to **Editorial & Craft Handoff** only; other
+Forges keep their proven non-streaming behavior until separately upgraded.
+Unsupported providers should use **Classic review**, not an implicit retry
+that might duplicate work.
+
+## Living Story Bible: manual, evidence-linked canon
+
+Novel Forge offers a **Canon Review** panel when a saved universe is selected.
+
+1. The author proposes a fact and supplies an evidence source and short
+   supporting excerpt.
+2. The fact remains `proposed` and cannot be treated as established canon.
+3. The author explicitly approves or rejects it.
+4. Only `approved` records are returned by the canon store's
+   `approved_context` interface for future context assembly.
+
+Each fact may include a chapter, fictional-world time, and narrative order.
+These fields are recorded separately to support nonlinear storytelling.
+Evidence is **author-supplied** at present; no automatic quote verification
+or contradiction checking is claimed.
+
+### Canon API
+
+- GET `/api/novelforge/canon?name=Saved_Universe`: list canon records.
+- POST `/api/novelforge/canon/propose`: create a proposed fact.
+- POST `/api/novelforge/canon/review`: change a proposed fact's state once.
+
+Example proposal:
+
+```json
+{
+  "universe": "Saved_Universe",
+  "kind": "character",
+  "subject": "Elena",
+  "claim": "Her scar is on her left arm.",
+  "source": "Book 1, Chapter 3",
+  "quote": "She touched the scar on her left arm.",
+  "chapter": "03",
+  "world_time": "Day 4",
+  "narrative_order": "Book 1, Chapter 3"
+}
+```
+
+Approve by submitting `universe`, `fact_id`, and
+`decision: "approved"`, or reject with `decision: "rejected"`.
+
+Records are stored separately under `NovelForge/.canon/<universe>/facts.json`.
+No existing universe JSON, manuscript, or Forge approval contract is altered
+when proposing, accepting, or rejecting a fact. Rename operations relocate
+the canon records; deletion of the parent universe **retains** separate canon
+records for recovery and reports that fact in the response.
+
+## Approved-only context and continuity (next v1.3 slice)
+
+Novel Forge now offers a **Canon Retrieval & Continuity Workshop**:
+
+- **Retrieve approved facts** accepts a query/excerpt and deterministically
+  ranks author-approved canon by subject, claim and cited source. Each result
+  includes its fact ID, evidence, chapter/world time and narrative order.
+  Pending and rejected proposals are never used.
+- **Check possible continuity tensions** compares a pasted excerpt with
+  approved facts and flags only explicit opposite statements about named
+  characters (currently **alive/dead** and **scar side**). Every warning
+  includes the approved claim, draft excerpt and original evidence. It may
+  be explained by time, point of view or character development; it is a
+  **review suggestion**, never a proven contradiction. No text is changed.
+- **Use approved Story Bible references in Editorial** is an author-controlled
+  checkbox in the Finishing Desk, **off by default**. Select a saved universe
+  and a maximum **number of facts** (1–200, initial value 12). Both classic
+  and streaming editorial reviews use the same ranked approved references,
+  in a clearly marked reference block. No other Forge uses them implicitly.
+
+Preview endpoints:
+- POST `/api/novelforge/canon/context` with
+  `{"universe":"Saved_Universe","query":"Elena enters the room","limit":12}`.
+  Returns selected approved facts, relevance scores, sources, a copyable
+  context string, and an *advisory* estimated token count.
+- POST `/api/novelforge/canon/continuity` with
+  `{"universe":"Saved_Universe","text":"Elena is dead."}`.
+  Returns only read-only potential-tension warnings with evidence.
+- The existing POST `/api/writer/editorial/review` and
+  `/api/writer/editorial/stream` accept optional
+  `"use_canon":true`, `"universe":"Saved_Universe"`, and
+  `"canon_limit":12`. Missing or false `use_canon` preserves existing
+  behavior exactly.
+
+**Limit 12 refers to retrieved fact records, not model context size.**
+The configured model, maximum output tokens, timeout and context settings
+are unchanged. Authors can retrieve up to 200 records deliberately.
+A nonempty query with no approved matches yields an empty context block,
+not unrelated filler. No embeddings, model loading or extra dependency
+is required for this stage.
+
+Model-generated fact extraction, cross-chapter causal/knowledge timelines,
+semantic contradiction detection, automatic source verification, and
+general drafting across other Forges are **not** claimed complete. In
+particular, the current rule-based linter cannot prove that a novel has no
+continuity issues.
+
+## Passive model capability inspection (v1.2 incremental)
+
+In Settings, **Inspect advertised capabilities** requests the configured
+endpoint's `GET /v1/models` metadata **without running inference**.
+The result lists model IDs and reports only explicitly declared context
+window, tool calling, vision and streaming capabilities, when available.
+Absent data appears as `null` (unknown), not as unsupported. This is
+read-only; it does not save profiles, alter endpoints, reduce context/timeout,
+start models, or make any inference request.
+
+The associated `GET /api/model/capabilities` endpoint returns the same
+diagnostics. Capability probes and saved routing profiles are separate
+future work; no support is inferred from model names or guessed hardware.
+
+## Novel Forge save protection (v1.2)
+
+Existing universes now receive uniquely named JSON and Markdown backups
+before a subsequent save overwrites them. Universe JSON and Markdown mirrors
+are replaced atomically. Same-filename rename operations retain the live
+universe instead of deleting it, and duplicate operations refuse to overwrite
+an existing universe. These changes use the existing local storage folders;
+they do not alter writing content, create cloud copies, or add requirements.
+
+## Verified universe backup recovery (v1.2)
+
+Novel Forge now includes a manual **Backup Recovery** panel for an existing,
+saved universe. The author can list prior JSON snapshots, preview their
+premise, date, title and section counts alongside the current version, then
+deliberately confirm restoration. A preview supplies a fingerprint of the
+backup and the current JSON/Markdown; any later change invalidates that
+confirmation. Corrupted backups, path traversal and mismatched universes are
+rejected before any restoration.
+
+A confirmed restore makes a *new* local backup of the current saved JSON and
+Markdown before overwriting. The selected original snapshot is restored
+without dropping unknown extension keys, and the Markdown mirror is rebuilt.
+If the mirror write fails, rollback of the prior content is attempted. No
+background restore, cloud copy, automatic recovery or model calls occur.
+
+This version deliberately restores only **existing Novel Forge universes**;
+a deleted universe or an unrelated Story Forge project is not automatically
+recreated. The web API serializes universe writes with restore operations,
+and tests reject stale restore previews even when another save races with
+recovery. Existing damaged JSON is refused by save/rename/duplicate, never
+silently treated as an empty universe. Older backups larger than the explicit 32 MiB safety preview
+limit need manual recovery. It does not restore the separate approved-canon
+review record (which remains stored independently).
+
+## Time-scoped continuity and explicitly assigned knowledge (v1.3)
+
+Author-approved canon proposals now accept optional `known_by` (a list of
+named characters) and independent `learned_time`. An empty list means
+**unspecified**, not "everyone knows". The world event date and the time
+a character learns about it are **different fields**.
+
+The Novel Forge workshop provides:
+
+- **World chronology**, grouped into separately comparable Day N and
+  YYYY-MM-DD sequences. Unknown or differently formatted times remain
+  unplaced rather than being silently sorted.
+- **Character knowledge**, listing only facts that the author explicitly
+  assigned to that character. When "as of" a world time is supplied, facts
+  learned later are excluded and unknown/incomparable learning times
+  are displayed separately as uncertain.
+- **Continuity at a chosen time**, selecting the latest author-approved
+  state at or before that moment for each comparable character attribute,
+  skipping future or incomparable declarations. Without a time entered,
+  the earlier advisory review remains available.
+
+Read-only endpoints:
+
+- POST `/api/novelforge/canon/chronology` with
+  `{"universe":"Saved_Universe"}`.
+- POST `/api/novelforge/canon/knowledge` with
+  `{"universe":"Saved_Universe","character":"Elena","at_world_time":"Day 7"}`.
+- POST `/api/novelforge/canon/continuity` can include
+  `"world_time":"Day 7"` to select temporal comparison.
+
+Only the literal **Day N** and **YYYY-MM-DD** patterns are comparable in
+this first implementation. They are never compared to each other. This is
+an evidence-linked heuristic, not a complete causality engine or a claim
+that an unrecorded character transition never occurred. Narrative display
+order is retained separately; no timeline is automatically edited.
+
+## Saved local model presets (v1.2)
+
+Settings now contains **Saved Model Profiles**, an optional local preset
+library. A preset includes the six existing endpoint fields: base URL, chat
+path, health path, health kind, model name and timeout. Names are author
+chosen; new names must be unique.
+
+- **Save form as new preset** writes the six fields to
+  `Projects/KayockWriter/ModelProfiles/profiles.json`.
+- **Load preset into form** fills the Settings editor but does **not** change
+  the active model, connect to the endpoint, run inference or save config.
+- The author must **review and explicitly use the existing Save endpoint
+  settings button** to change the active endpoint.
+- **Delete preset** needs confirmation, retains a backup of the prior preset
+  library and does not touch active settings.
+- Credentials and API keys are never stored or returned by the profile
+  library. Saved presets cannot hold arbitrary secret/config fields.
+- Existing model context limits, endpoint timeouts, output token budgets,
+  activation behavior and environment overrides are not automatically
+  changed. This feature does not implement hidden model routing or preload
+  models.
+
+The APIs are GET `/api/model/profiles`, POST
+`/api/model/profiles/save` with `{"name":"...","settings":{...}}`, and
+POST `/api/model/profiles/delete` with `{"profile_id":"..."}`.
+Damaged profile libraries are refused rather than overwritten.
+
+## Relationship Explorer — initial visual studio slice (v1.4)
+
+Novel Forge now contains an optional SVG **Relationship Explorer**, showing
+approved story connections as an interactive node-and-edge map. Click a node
+to focus that entity; use **Show all** to reset. Under the graph, each link
+displays its original author-approved claim, evidence source, fictional-world
+time, and narrative order.
+
+A relationship proposal can now explicitly name `related_to` (the target
+entity) and `relation_type` (e.g. sibling, rival, ally), along with its
+existing author-supplied evidence and approval workflow. These two new
+optional fields are used only for the `relationship` kind and must be
+supplied together. Legacy claims without explicit endpoints remain intact
+but are **not** guessed into graph edges. Only approved structured facts
+are graphed. The visualization is deterministic, local and needs no model
+calls, browser build tooling or additional Python libraries.
+
+POST `/api/novelforge/canon/relationships` accepts the saved `universe`,
+optional `focus` and `max_edges` (1–250, default 150). Large graphs are
+explicitly truncated; proposed/rejected facts never appear. This is the
+first relationship visualization, not the complete v1.4 corkboard, scene
+graph, or branching-manuscript system.
+
+## Visual Scene Corkboard (v1.4 initial scene-planning milestone)
+
+Story Forge now has a **Visual Scene Corkboard** room for each existing project
+and book. It stores a **separate**, manually edited planning board beneath
+`<project>/Scenes/Boards/<book>.json`, rather than rewriting existing
+chapter cards, manuscript prose, versioned drafts or the Story Bible.
+
+- Add cards with title, chapter label, POV, location, summary and story beats.
+- Arrange the cards across Ideas, Outlined, Drafting, Revising, Ready and
+  Parked lanes. Use drag-and-drop or visible Move, Up and Down controls.
+- Edit cards deliberately; parking preserves a card for later rather than
+  deleting it. There is no automatic transition or AI-generated scene.
+- A board read is read-only. Every modification requires the latest
+  `expected_revision` SHA-256, so an outdated browser tab cannot silently
+  overwrite a newer plan. Each subsequent save backs up the preceding
+  board JSON; writes are atomic.
+- The board refuses corrupt JSON, unknown books/projects, unsupported fields,
+  invalid lane moves or unsafe paths. Projects' existing scene files are
+  not imported or automatically rewritten.
+
+API: GET `/api/writer/story/scene_board?project_id=...&book_id=...`;
+POST `/api/writer/story/scene_board/change` with `action` `add`,
+`update`, `move`, or `park`, current `expected_revision`,
+`project_id`, `book_id`, and the requested card fields/IDs.
+
+This is a **planning corkboard**, not a full series hierarchy, multi-user
+collaboration system or automatic scene-to-prose publisher.
+
+## Independent draft branches (v1.4 alternative manuscript milestone)
+
+The existing **Draft Workspace** now has **Alternative Draft Branches**.
+The author chooses a real version listed in the existing Story Forge
+chapter-draft manifest, names an alternative, and creates a separate branch
+below `<project>/Branches/<book>/<branch-id>/`.
+
+- Branch creation copies the saved chapter prose body into a new independent
+  version; the original draft and its existing version history are unchanged.
+- Loading a branch displays its latest text only in the alternative editor.
+  Saving requires an explicit confirmation and appends a new immutable
+  alternative version plus a backed-up branch manifest.
+- The author can preview a unified diff between the latest branch version
+  and its original saved source. A branch does **not** merge back, publish,
+  overwrite canonical drafts, modify project manifests, or change prose
+  manuscripts automatically.
+- Source files must match their recorded history SHA-256. Alternative files
+  also verify their content hashes. Invalid names, foreign project/book
+  paths, damaged manifests and stale branch revisions are rejected.
+- Every branch is a separate history; existing draft-save, continuation,
+  editor gates, approval phrases and automatic context settings are unchanged.
+
+API: GET `/api/writer/story/branches?project_id=...&book_id=...&chapter=...`;
+POST endpoints `/api/writer/story/branches/create`,
+`/api/writer/story/branches/read`,
+`/api/writer/story/branches/append`, and
+`/api/writer/story/branches/compare`.
+
+**Limits:** No automatic branch promotion, three-way merge, character
+retconning, AI drafting in branches, or multi-device conflict reconciliation
+is claimed. Those would require separate review and acceptance.
+
+## Series / Book / Act outline (v1.4 incremental)
+
+Story Forge now offers an optional, author-edited **Series / Book / Act
+Outline** alongside the Visual Scene Corkboard. It reads the project's
+existing saved books but stores its series title, series notes, and named
+acts separately in `<project>/Planning/series_outline.json`.
+
+- Every act belongs to a book that already exists in the Story Forge
+  project manifest. Acts have stable IDs, so renaming or revising their
+  descriptions retains any scene-card reference.
+- Authors explicitly save series details and add/edit acts. There is
+  no act deletion, automated book creation, rearrangement of saved chapters,
+  manuscript rewrite or project-manifest migration.
+- The separate file uses atomic writes, backups and optimistic SHA-256
+  revisions; stale tabs, invalid books, and damaged outlines are rejected.
+  Older Story Forge projects remain readable without a new outline file.
+- The corkboard may assign a scene to an act ID, and reads can show the
+  current act title without migrating older cards.
+
+GET `/api/writer/story/series_outline?project_id=...`;
+POST `/api/writer/story/series_outline/change` with current
+`expected_revision`, a project ID, and one of `details`, `act_add`,
+or `act_edit`. Only deliberate author actions create/update the plan.
+
+This is a series label and book/act plan **within an existing project**,
+not yet a global library that unites several independent projects
+into one series. Such a cross-project registry is future work.
+
+## Verified scene links to saved chapter drafts
+
+Corkboard cards may have optional `draft_filename` and `act_id` fields.
+Selecting a draft links by **saved version reference only**: it must be
+listed in that book's existing Story Forge draft manifest, its file must
+match its recorded SHA-256, and (where the card has a chapter label)
+the saved chapter title must match. A reference never copies prose,
+opens a model, rewrites a draft or changes the canonical chapter.
+Legacy cards without either new field remain readable.
+
+Board reads annotate whether a reference is currently valid; if its
+source is missing or altered, the reference is reported as unresolved
+instead of silently rewriting the manuscript. A scene may be unlinked
+without deleting the saved draft.
+
+## Review-first acceptance of an alternative draft
+
+The Draft Workspace now includes **Preview acceptance and diff** followed
+by a separate **Accept previewed alternative as a new main draft version**
+action. Accepting an alternative uses the original Story Forge
+`draft_save_action` workflow with `execute=True`.
+
+- Preview compares the latest **saved branch version** to the current
+  **saved canonical chapter**. It does not inspect or accept unsaved
+  browser text. It shows the next version number and a limited unified
+  diff, without writing any file.
+- A confirmation fingerprint covers the project/book/branch ID, branch
+  manifest revision, canonical manifest bytes, current draft content,
+  and alternative content. If either side changes after preview,
+  acceptance is refused and the author must preview again.
+- Acceptance is a **new canonical draft version**, never an overwrite
+  or destructive merge. Earlier versions and the alternative branch
+  remain saved. The server serializes ordinary draft saves, draft
+  continuation saves, previews and acceptances through one shared lock.
+- The existing draft-save workflow now also refuses to overwrite an
+  already-existing filename and writes each new draft file atomically.
+
+POST `/api/writer/story/branches/preview_accept` with
+`project_id`, `book_id`, `branch_id`, then POST
+`/api/writer/story/branches/accept` with those same identifiers
+and the returned `confirmation_token`.
+
+**Limits:** This is explicit append-only acceptance, not a three-way
+merge or a silent overwrite. It does not automatically approve
+canon, revise Story Bible facts, or publish manuscript prose.
+No new authentication requirement or AI provider change is introduced.
+
+## v1.5 — Author-owned Voice DNA and advanced editorial review
+
+The Finishing Desk now includes an optional **Voice DNA** library with
+hand-authored, locally stored style guides. Each guide can describe writing
+traits, expressive choices to preserve, editorial flattening to avoid, and
+up to three short **author-provided** sample excerpts.
+
+- Nothing extracts writing samples automatically. Each profile is created
+  only after an explicit save action. Guides may be created without saving
+  any sample writing.
+- Profiles live under the local data directory at
+  `Projects/KayockWriter/VoiceDNA/profiles.json`. Listing guide names
+  does not expose stored sample excerpts. Inspecting an explicitly selected
+  guide does; deletion retains a local recovery backup.
+- The **Include selected Voice DNA reference** checkbox is off by default.
+  Only an explicitly selected guide is appended as a reference to that
+  individual editorial request (both streaming and classic). If the
+  configured model endpoint is online, the selected guide, including
+  any examples, is sent to that endpoint for that review. The user should
+  not opt into transmitting private samples to an untrusted endpoint.
+- Examples are marked as read-only **style data**, not instructions,
+  generated training data, or passages to imitate. No weights are trained,
+  no hidden fine-tuning occurs, and no source manuscript is changed.
+- Profiles are separate from legacy FOXAI-derived narrator and short
+  fiction profiles: those existing systems and optional private voice packs
+  remain unchanged.
+
+New read-only editorial modes **Developmental** and **Voice Audit** focus
+on structure/pacing and on distinct authorial language respectively.
+The older `review` and `suggestion` modes remain. All modes use the
+existing explicitly configured model with the same timeout, context
+and output-token settings. Reviews never save or automatically apply
+revisions to the author's original writing.
+
+API:
+- GET `/api/writer/voice_dna` lists guide names and metadata only.
+- GET `/api/writer/voice_dna/read?id=...` inspects the specified guide.
+- POST `/api/writer/voice_dna/create` with
+  `{"profile":{"name":"...","author":"...","traits":[],"preserve":[],"avoid":[],"samples":[]}}`.
+- POST `/api/writer/voice_dna/delete` with `{"id":"..."}`.
+- Existing `/api/writer/editorial/review` and
+  `/api/writer/editorial/stream` accept optional `use_voice_dna:true`
+  plus a saved `voice_dna_id`. Without the opt-in, no Voice DNA is
+  read into the model prompt.
+
+## v1.5 — Single-document DOCX and EPUB 3 exports
+
+The Finishing Desk now exports to **DOCX** and **EPUB 3** directly from
+the text that the author explicitly places there. The files are made in
+memory by the local Python server and downloaded by the browser; they
+are **not** saved into existing manuscript folders or transmitted to
+an external publishing service.
+
+- DOCX: a basic formatted WordprocessingML package with a title, optional
+  author, and separate paragraphs/stanzas with manual line breaks kept.
+- EPUB 3: an EPUB-compliant ZIP with the required uncompressed `mimetype`
+  first, navigation, package metadata, a single XHTML chapter and CSS.
+- Existing HTML, Markdown and plain-text downloads remain unchanged.
+  Downloaded HTML can be printed to PDF through a browser; this milestone
+  does not yet implement a direct PDF export service.
+- Source text limits (1–80,000 characters), XML character validation,
+  metadata sanitization and escaped document content are enforced.
+  Invalid source is rejected, **not silently truncated**.
+- Export is a single-document handoff, not a full-book assembler with
+  illustrated pages, elaborate typesetting, synchronized tables of
+  contents or automatic pagination.
+
+POST `/api/writer/publishing/export` accepts
+`{"format":"docx","title":"...","author":"...","writing_type":"prose","text":"..."}`
+or `"format":"epub"` and responds with a local attachment. No model
+generation is triggered during export.
+
+## v1.5 — Full-book assembler and direct PDF (basic edition)
+
+The **Full-Book Assembly & Publishing** section in the Finishing Desk
+makes a read-only book manuscript from **explicitly selected** saved
+Story Forge chapter draft versions.
+
+1. Choose a saved Story Forge project and one of its existing books.
+2. Review available chapters and select the exact saved version of each.
+   All chapters are initially selected; authors may exclude any chapter
+   and use Up/Down controls to change the reading order.
+3. Enter a book title and optional author name, then click **Preview exact
+   chapter selection**. The preview lists included chapters, versions,
+   word counts, and short opening excerpts.
+4. Click **Download book DOCX / EPUB / PDF**. The server checks that the
+   current project, saved draft history, selected chapter bytes, order,
+   title and author still match the preview. If not, it refuses export
+   and asks for a fresh preview. It never silently switches to a later
+   draft or fills in missing chapters.
+
+The assembler does not copy from unsaved editor content or scan unrelated
+projects. It accepts up to 160 distinct chapters and 800,000 characters
+of verified text per book, without silently truncating longer books.
+A selected chapter must exist in that book's draft manifest and its
+saved prose must match the recorded SHA-256. Missing, corrupted,
+unexpected, or foreign draft files are rejected.
+
+**Available layouts:**
+- **Book DOCX**: title and author page; editable contents listing;
+  chapter headings with page breaks, and paragraphs retaining line breaks.
+  This is not yet an auto-updating Word TOC.
+- **Book EPUB 3**: title page, ordered per-chapter XHTML sections,
+  e-reader navigation list, metadata, and basic readable typography.
+- **Book PDF**: direct local, searchable, page-numbered PDF with a
+  title page and chapters starting on new pages. For portability
+  without any new Python dependencies, this initial PDF renderer uses
+  standard PDF Courier fonts with Windows-1252 characters only.
+  **Unsupported characters (including emoji and non-Western scripts)
+  fail explicitly**. Use EPUB or DOCX for full Unicode; no manuscript
+  glyph is silently replaced.
+
+The existing single-passage Finishing Desk now also offers a basic
+direct PDF download with the same conservative character limits.
+Browser-printable HTML and previous DOCX/EPUB/Markdown/TXT remain.
+
+**API:**
+- GET `/api/writer/publishing/book/options?project_id=...&book_id=...`
+  returns saved chapter versions and latest-version defaults.
+- POST `/api/writer/publishing/book/preview` with `project_id`,
+  `book_id`, `title`, `author`, and ordered `chapters` items
+  (`{"chapter":"...","filename":"..."}`) returns a read-only
+  preview and `confirmation_token`.
+- POST `/api/writer/publishing/book/export` with the identical
+  selections, metadata, confirmation token and `format` (docx,
+  epub or pdf) returns a binary attachment.
+- POST `/api/writer/publishing/export` also accepts `format:pdf`
+  for a single Finishing Desk passage.
+
+All exports are generated in memory and downloaded by the browser.
+**No source drafts, approved manuscript files, project manifests, story
+bibles, or private voice profiles are edited or transmitted to a
+publishing provider**. No model is called to assemble or format books.
+
+This is a conservative textual publishing pass. Fine typography, covers,
+page-break fine tuning, illustrated books, indexed citations, non-Latin
+font embedding and real Word/e-reader/PDF visual QA remain for later
+release acceptance. The PDF's print layout is not guaranteed to match
+professional typesetting.
+
+## v1.5 — Author-selected cover artwork and optional Unicode PDF font
+
+Full-Book Assembly now supports two strictly optional, author-controlled
+files for a **single publishing request**. Neither file is stored in Writer's
+project, manuscript, Story Bible, voice-profile or settings directories.
+
+**Cover artwork:**
+- Choose a local, licensed **RGB JPEG (.jpg/.jpeg) up to 2 MB** in the book
+  publisher. Writer validates the JPEG image's structure, 8-bit RGB
+  channels, dimensions and pixel count (up to 12 million pixels).
+  PNG, TIFF, SVG and image-URL fetching are not implemented in this pass.
+- The server strips common JPEG EXIF/XMP (APP1), Photoshop (APP13), and
+  comment metadata before embedding; unsupported/proprietary metadata
+  formats may still exist and should be checked before distribution.
+- The selected cover is embedded in DOCX's opening page, EPUB 3's
+  title page with `cover-image` metadata, and PDF's opening page.
+  The preview identifies its dimensions, and its filtered bytes'
+  SHA-256 is bound to the export confirmation. Changing or clearing
+  the cover invalidates an old preview.
+- Cover handling performs **no external calls**, stores no persistent
+  assets, and never modifies existing manuscripts.
+
+**Optional Unicode PDF font:**
+- A PDF export may embed an explicitly selected **TrueType (.ttf) up to
+  3 MB**. No fonts are bundled, downloaded, installed or discovered
+  from the machine by Writer. The file is embedded **only in the
+  downloaded PDF** and is not saved in Writer data. Authors must have
+  permission to embed their selected font.
+- The opt-in renderer uses a TrueType Unicode cmap, embedded
+  `CIDFontType2` and a `ToUnicode` mapping for searchable/extractable
+  text. It supports characters **that the selected font actually
+  contains** without silently replacing missing glyphs.
+- This is **simple left-to-right glyph positioning**. It does not
+  implement Unicode bidirectional reordering, Arabic/Indic shaping,
+  contextual glyph substitution, ligatures, color emoji, vertical
+  writing or automatic font fallback. Complex scripts still require
+  another publishing engine; DOCX/EPUB are safer alternatives.
+- The unchanged default PDF path continues to use standard
+  Windows-1252-compatible PDF fonts and refuses unsupported characters.
+- Both book and individual-passage PDF exports can use the selected
+  font. The book preview token also incorporates the font hash.
+- PDF layout now keeps a cover/title page, reserves chapter title
+  pages, adds continuation headings, avoids certain orphaned lines,
+  and numbers body pages. It is still a **basic** publishing layout
+  requiring visual proofing, not professional press-ready typesetting.
+
+The `book/preview` and `book/export` API inputs now accept optional
+`cover_jpeg_base64` and `pdf_ttf_base64` fields. The single-passage
+`/api/writer/publishing/export` accepts `pdf_ttf_base64` for PDF.
+Both are validated in memory. There is still no new Python dependency,
+no persistent upload endpoint, no new auth gate, no change to
+configured model endpoints/context sizes/timeouts, and no automatic
+manuscript edits.
+
+## v2.0 initial — author-controlled Editorial Council
+
+A new **Editorial Council** panel is available inside the Finishing
+Desk. It uses the **one configured OpenAI-compatible model endpoint**
+without introducing new agents, providers, persistent services, tool
+permissions, model settings, authentication gates or background jobs.
+
+**Author's explicit workflow:**
+1. Put the exact passage you want reviewed in the existing Finishing
+   Desk. Select **1–3** independent roles from Story Architect,
+   Continuity Editor, Voice Guardian and Line Editor.
+2. Click **Run selected Council reviews** and confirm the number of
+   sequential model calls. Each role receives the full, original
+   passage (up to the existing 80,000-character editorial input limit),
+   the author's instructions and any Story Bible / Voice DNA references
+   that the author explicitly opted into above. Reviewers do not
+   see earlier reviewers' reports or silently influence each other.
+3. Review each complete report separately. A live stream shows which
+   role is active, and the existing generation cancellation route stops
+   the in-flight model request and prevents further role calls. No
+   background execution continues after Stop.
+4. **Optionally** click **Synthesize completed reports**. This requires
+   another confirmation and **one additional model call**. It passes
+   the actual original manuscript and every complete, unabridged
+   report to a synthesis reviewer. The synthesis identifies
+   agreement, disagreement, priorities and questions; it cannot
+   approve canon, save or apply a rewritten draft.
+5. Use any feedback manually. Reports are read-only browser-session
+   data; they are not persisted to manuscript, editorial or project
+   folders. Losing the browser session loses unsaved feedback.
+
+The Council exposes no tools, filesystem or direct writing methods
+to model responses. It may suggest wording, but it does not edit,
+auto-accept, promote, publish or rewrite a manuscript. Partial reports
+are not accepted as complete on model errors/cancellation.
+Nothing truncates full role reports or rewrites the original passage
+to fit a different context; if a synthesis exceeds its explicit
+input limit, it rejects rather than silently compacting. The
+configured model's output-token budget and timeout are reused
+unchanged for **each** requested call. Sequential calls can take
+longer than one review, especially on local models, so the number
+of calls is shown before a run.
+
+**REST API:**
+- GET `/api/writer/council/roles` — read-only role metadata, call
+  limits and model name; no inference or configuration changes.
+- POST `/api/writer/council/stream` with `stage:"reviews"` and
+  `roles:["story_architect","voice_guardian"]` plus the existing
+  Finishing Desk editorial fields. Returns SSE with `start`,
+  `role_start`, `role_token`, `role_done`, and `done` or
+  `cancelled`/`error`. `role_done` includes the complete text
+  of that role's read-only report.
+- POST to the **same** endpoint with `stage:"synthesis"`,
+  the exact original fields and roles, the completed `reports`,
+  and the `source_fingerprint` issued by the reviews.
+  Synthesis is never triggered implicitly. Its reports and input
+  are supplied by the current browser session.
+- POST `/api/generation/<generation_id>/cancel` continues to
+  stop the current stream, including Council roles.
+
+**Scope:** This is an incremental sequential multi-role **review
+workflow**, not yet a distributed model mesh, parallel executor,
+self-writing agent swarm, persistent queue or automatic revision
+manager. Every action requires an explicit author click. Additional
+role-specific endpoint selection and richer approval UIs are future
+work; no assumption is made about local multi-model installations.
+
+## v2.0 — Per-role saved model assignments and Author Decision Board
+
+The Editorial Council can now assign a different **already-saved Writer
+Model Profile** to each of the four possible roles and to the optional
+synthesis role. This adds no new provider registry or background
+model manager.
+
+- All assignments default to the **current active configured model**.
+  Authors may opt into a saved profile per role from the optional
+  **Model assignments** controls in the Finishing Desk. Profiles are
+  created beforehand in Writer's existing Settings panel.
+- Each selected role runs sequentially on its selected OpenAI-compatible
+  endpoint, with that profile's own saved model ID, chat path and
+  timeout. These are **one-run, ephemeral choices**. The active model,
+  active model settings, context, configured timeouts and profile
+  records are not modified.
+- Model selection is validated **before any streamed response begins**.
+  Unknown, deleted, malformed or unselected role IDs are rejected.
+  Changing a role's saved-profile selection or the synthesis model
+  changes the source fingerprint and invalidates a stale synthesis.
+- **Credential isolation:** Writer never forwards the active
+  endpoint's API key (including an environment-supplied key) to a
+  saved profile with a different base URL. The active key can only
+  be used for the active endpoint or a saved model profile that
+  references the same exact base URL. A different provider requiring
+  authorization may return an error: this milestone does not create,
+  store or prompt for credentials to that second provider.
+- No new model is automatically downloaded, loaded or kept running.
+  The chosen endpoint must already be ready to serve requests.
+  If one role fails, subsequent roles are not called.
+- Both Council `role_start` and `role_done` events identify the
+  model used, so completed reports carry visible provenance. The
+  report does not include or display API keys.
+
+**Manual Author Decision Board:**
+- In a completed reviewer report, **highlight a specific passage**
+  and click **Add selected recommendation to decision board**. There
+  is no automatic extraction of suggestions or model-generated
+  decision grading. You may also add an author-written note.
+- Each item has an editable author note and one of four **author-only
+  review statuses**: Pending, Approved for consideration, Rejected
+  or Deferred. An approval labels a suggestion as worth considering;
+  **it is NOT authorization to edit, merge, overwrite, publish, or
+  add anything to canon**.
+- The board is in browser session memory only. If you want a durable
+  record, click **Download decision board JSON**. The exported file
+  contains just the selected recommendation snippets, statuses,
+  author notes and a fingerprint; it does **not** include the
+  original full manuscript text or entire reviewer reports.
+- Starting another Council run with an unsaved decision board
+  asks for confirmation before clearing those notes. Source or
+  model selection changes are flagged as stale, not silently
+  associated with the current manuscript.
+- No new persistence route, background save, model calls, or
+  manuscript write permission is introduced by the board.
+
+**Tests:** `tests/test_council_model_routing.py` checks two
+in-process model endpoints, individual per-role and synthesis
+routing, active configuration preservation, saved timeout reuse,
+HTTP validation, stale synthesis fingerprint rejection and both
+config-file and environment API-key isolation. Existing Council
+streaming/cancellation tests still run. Interface controls are
+covered by the browser script syntax check and static HTML
+assertions; hands-on browser acceptance is still required.
+
+## v2.0 — Controlled Revision Workspace with explicit author acceptance
+
+This optional Finishing Desk workspace connects manually chosen editorial
+recommendations to Story Forge's **existing append-only canonical draft history**.
+It does **not** invoke a model, rewrite a passage automatically, or apply
+an Approved-for-consideration Council recommendation without the author.
+
+**Workflow:**
+1. Select a saved Story Forge project and book. Choose an existing saved
+   chapter and click **Load latest saved chapter**. A read-only copy of
+   that **verified latest saved version** appears beside a separate
+   proposed-text area. No unsaved Story Forge editor buffer is read.
+2. Manually edit the proposed revision, choosing which Council ideas
+   (if any) to incorporate. You can explicitly copy the current
+   Finishing Desk passage into the candidate, but no model report
+   or Decision Board suggestion edits it automatically.
+3. Click **Preview precise changes**. Writer compares the entire
+   proposal against the last saved chapter and displays original and
+   proposed word counts, change metrics and a line-oriented unified
+   diff. The **diff display** is bounded to 400 lines, with a clear
+   warning when the *display* is shortened; the underlying candidate
+   is **never** truncated to fit the preview.
+4. Check **I have reviewed this exact candidate**, click
+   **Save approved revision as NEW version**, and confirm the
+   save. The server verifies the candidate, canonical chapter
+   bytes and full version-history hash still match the preview
+   token, then invokes Story Forge's existing draft-save action.
+   It appends a fresh draft version without overwriting previous
+   chapter drafts; manuscript and project files outside that new
+   version are not automatically revised.
+
+**Safety constraints:**
+- Preview and load are read-only. The only new write is explicitly
+  approved, appended canonical draft writing via Story Forge's
+  existing versioned save path.
+- Preview and acceptance share the Story Forge draft-write lock
+  already used by normal draft saves and branch acceptance.
+  Duplicate or stale approvals fail; a changed chapter, different
+  candidate, altered history, or an existing target filename
+  prevents saving over older work.
+- The author must submit the exact candidate that was previewed.
+  Candidates that are blank, over 80,000 characters, or contain
+  NUL/carriage-return characters or leading/trailing whitespace
+  are rejected rather than silently altered by legacy Writer
+  normalization. A leading Markdown heading is also refused for
+  this milestone because Story Forge's older draft reader would
+  otherwise drop it on reload. No candidate is cut off by a browser
+  character limit.
+- This is a **whole-chapter manual revision** workflow. It does not
+  automatically merge prose, extract machine-generated patch hunks,
+  decide whether a change is correct, promote canon or overwrite
+  versions. The approved Council notes are recommendations, never
+  direct write permissions.
+- Source draft history must be intact, the selected saved chapter
+  must still match its recorded SHA-256, and the project/book
+  association must be valid. No automatic repair or substitute
+  "latest" version occurs.
+
+**API:**
+- GET `/api/writer/revision/options?project_id=...&book_id=...`
+  lists saved chapters and latest-version metadata.
+- POST `/api/writer/revision/load` with project, book and chapter
+  returns the entire verified latest saved chapter, read-only.
+- POST `/api/writer/revision/preview` with project, book, chapter
+  and full `candidate` returns a diff and `confirmation_token`.
+- POST `/api/writer/revision/accept` sends the identical fields,
+  `confirmation_token` and `approved:true`, and appends exactly
+  one new canonical version if the source and candidate still match.
+
+**Automated coverage:** `tests/test_revision_workspace.py` checks
+exact source fidelity, nondestructive preview, version history,
+approval refusal, stale source/history/candidate detection, missing
+or corrupted files, unsupported text, 400-line diff-display limit
+without manuscript truncation, filename collisions, HTTP routes,
+browser control wiring and concurrent duplicate-approval safety
+on Linux and Windows. Full browser/manual author acceptance
+remains an explicit release requirement.
+
+## Safety and testing
+
+No model downloads, services, authentication gates, provider changes, timeout
+changes, cloud dependencies, or migrations are introduced. Core remains
+Python standard library only.
+
+Offline GitHub Actions runs on Linux/Python 3.9, Linux/Python 3.12, and
+Windows/Python 3.12:
+
+```bash
+python tests/run_tests.py
+python tests/test_upgrade.py
+python tests/test_foundation.py
+python tests/test_novel_storage_safety.py
+python tests/test_recovery.py
+python tests/test_canon_api.py
+python tests/test_context_engine.py
+python tests/test_timeline.py
+python tests/test_relationships.py
+python tests/test_scene_board.py
+python tests/test_draft_branches.py
+python tests/test_series_outline.py
+python tests/test_branch_accept.py
+python tests/test_model_capabilities.py
+python tests/test_model_profiles.py
+python tests/test_voice_dna.py
+python tests/test_editorial_council.py
+python tests/test_council_model_routing.py
+python tests/test_revision_workspace.py
+python tests/test_publishing.py
+python tests/test_book_publishing.py
+python tests/test_cover_unicode_pdf.py
+python tests/test_streaming.py
+python tests/verify_kayock_writer.py
+python tests/check_ui_js.py
+```
+
+The JavaScript syntax check uses Node only when available in the test
+environment, not in the runtime. All model calls in tests use local mock
+servers. Real local-model performance and browser usability still require
+optional integration testing on the author's hardware before release.

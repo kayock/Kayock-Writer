@@ -7,6 +7,8 @@ configurable. JSON API, single-page UI at `/`, health at `/api/status`.
 from __future__ import annotations
 
 import json
+import threading
+import uuid
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,13 +16,29 @@ from typing import Any, Dict, Optional, Tuple
 
 from . import __version__, APP_NAME, voices
 from .config import Config, save_config
-from .editorial import editorial_review
+from .canon import CanonStore
+from .context import preview as preview_canon
+from .continuity import check as check_continuity
+from .editorial import editorial_review, prepare_editorial
+from .editorial_council import ROLES, MAX_ROLES, prepare_council, council_events, resolve_council_models
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
+from .recovery import UniverseRecovery
+from .model_profiles import ModelProfiles
+from .voice_dna import VoiceDNA
+from .publishing import build_export
+from .book_publishing import build_book_export
+from .book_assembly import BookAssembler
+from .relationships import build_graph
+from .timeline import chronology, character_knowledge
 from .poetry import PoetryForge
-from .provider import Provider
+from .provider import Cancellation, Provider
 from .storage import Store
 from .storyforge import StoryForge
+from .scene_board import SceneBoard
+from .series_outline import SeriesOutline
+from .draft_branches import DraftBranches
+from .revision_workspace import RevisionWorkspace
 from .weaver import Weaver
 
 MAX_BODY_BYTES = 9 * 1024 * 1024  # matches FOXAI mission JSON limit
@@ -33,6 +51,10 @@ class App:
         self.cfg = cfg
         self.store = Store(cfg.data_dir())
         self.provider = Provider(cfg)
+        self._generation_lock = threading.Lock()
+        self._story_draft_lock = threading.RLock()
+        self._active_generations = {}
+
         voices.apply_private_voice_pack(cfg.data_dir())
         self.poetry = PoetryForge(
             self.store, self.provider,
@@ -42,11 +64,20 @@ class App:
         )
         self.weaver = Weaver(self.store, self.provider, default_author=cfg.default_author)
         self.novelforge = NovelForge(self.store)
+        self.recovery = UniverseRecovery(self.store, self.novelforge)
+        self.model_profiles = ModelProfiles(self.store)
+        self.voice_dna = VoiceDNA(self.store)
+        self.canon = CanonStore(self.store)
         self.storyforge = StoryForge(
             self.store,
             require_approval_phrase=cfg.require_approval_phrase,
             default_author=cfg.default_author,
         )
+        self.book_assembler = BookAssembler(self.storyforge)
+        self.scene_board = SceneBoard(self.store, self.storyforge)
+        self.series_outline = self.scene_board.outline
+        self.draft_branches = DraftBranches(self.store, self.storyforge)
+        self.revision_workspace = RevisionWorkspace(self.storyforge, self.draft_branches)
 
     def status(self) -> Dict[str, Any]:
         health = self.provider.health(timeout=3.0)
@@ -103,9 +134,184 @@ class App:
         return {'ok': True, 'message': 'Optional Craft Suite link saved. No connection was made.',
                 'craft_suite_url': url}
 
+    def editorial_canon_context(self, d: Dict[str, Any]) -> str:
+        """Only an explicit opt-in adds approved story facts to model prompts."""
+        if d.get('use_canon') is not True:
+            return ''
+        universe = self._existing_universe(d.get('universe', ''))
+        limit = d.get('canon_limit', 12)
+        if isinstance(limit, bool):
+            raise ValueError('Canon limit must be a whole number.')
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError('Canon limit must be a whole number.')
+        return preview_canon(
+            self.canon.approved_context(universe),
+            str(d.get('text') or ''), limit
+        )['context_text']
+
+    def editorial_voice_context(self, d: Dict[str, Any]) -> str:
+        # Author must explicitly select a saved card for each review.
+        if d.get('use_voice_dna') is not True:
+            return ''
+        selected = d.get('voice_dna_id')
+        if not isinstance(selected, str) or not selected:
+            raise ValueError('Select a Voice DNA card before using it for a review.')
+        return self.voice_dna.prompt_context(selected)
+
     def editorial(self, d: Dict[str, Any]) -> Dict[str, Any]:
-        return editorial_review(self.provider, d,
-                                max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000))
+        return editorial_review(
+            self.provider, d,
+            max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000),
+            canon_context=self.editorial_canon_context(d),
+            voice_context=self.editorial_voice_context(d),
+        )
+
+    def canon_context_preview(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        limit = d.get('limit', 12)
+        if isinstance(limit, bool):
+            raise ValueError('Fact limit must be a whole number.')
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError('Fact limit must be a whole number.')
+        result = preview_canon(
+            self.canon.approved_context(universe), str(d.get('query') or ''), limit
+        )
+        result['universe'] = universe
+        result['read_only'] = True
+        return result
+
+    def canon_continuity_check(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        result = check_continuity(
+            d.get('text'), self.canon.approved_context(universe),
+            world_time=d.get('world_time', ''),
+        )
+        result['universe'] = universe
+        return result
+
+    def canon_relationships(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        limit = d.get('max_edges', 150)
+        if type(limit) is not int:
+            raise ValueError('Relationship edge limit must be a whole number.')
+        graph = build_graph(
+            self.canon.approved_context(universe),
+            focus=d.get('focus', ''),
+            max_edges=limit,
+        )
+        graph['universe'] = universe
+        return graph
+
+    def canon_chronology(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        result = chronology(self.canon.approved_context(universe))
+        result['universe'] = universe
+        return result
+
+    def canon_knowledge(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        universe = self._existing_universe(d.get('universe', ''))
+        result = character_knowledge(
+            self.canon.approved_context(universe),
+            d.get('character'), d.get('at_world_time', ''),
+        )
+        result['universe'] = universe
+        return result
+
+    def _existing_universe(self, name: str) -> str:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Choose a saved universe first.')
+        p = self.novelforge.novel_path(name)
+        if p is None or not p.is_file():
+            raise ValueError('Save or load the universe before editing canon.')
+        return p.stem
+
+    def author_draft_action(self, function, *args):
+        """Serialize canonical draft saves with branch acceptance."""
+        with self._story_draft_lock:
+            return function(*args)
+
+    def universe_write(self, function, *args):
+        """Serialize app HTTP mutations with restore previews and replacement."""
+        with self.recovery._lock:
+            return function(*args)
+
+    def recovery_backups(self, name: str) -> Dict[str, Any]:
+        return self.recovery.list_backups(name)
+
+    def recovery_preview(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        return self.recovery.preview(d.get('universe', ''), d.get('backup_id', ''))
+
+    def recovery_restore(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        return self.recovery.restore(d.get('universe', ''),
+                                     d.get('backup_id', ''),
+                                     d.get('confirmation_token', ''))
+
+    def canon_list(self, name: str) -> Dict[str, Any]:
+        return self.canon.list_facts(self._existing_universe(name))
+
+    def canon_propose(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        name = self._existing_universe(d.get('universe', ''))
+        return self.canon.propose(
+            name, str(d.get('kind') or ''), str(d.get('subject') or ''),
+            str(d.get('claim') or ''),
+            [{'source': str(d.get('source') or ''), 'quote': str(d.get('quote') or '')}],
+            chapter=str(d.get('chapter') or ''),
+            world_time=str(d.get('world_time') or ''),
+            narrative_order=str(d.get('narrative_order') or ''),
+            known_by=d.get('known_by', []),
+            learned_time=str(d.get('learned_time') or ''),
+            related_to=d.get('related_to', ''),
+            relation_type=d.get('relation_type', ''),
+        )
+
+    def rename_universe_with_canon(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        old_name = self._existing_universe(d.get('name', ''))
+        new_title = str(d.get('new_title') or '').strip()
+        if not new_title:
+            raise ValueError('New universe title required.')
+        target = self.novelforge.novel_path(new_title)
+        if target is None:
+            raise ValueError('Invalid universe title.')
+        if target.stem != old_name and target.exists():
+            raise ValueError('A universe with that title already exists.')
+        self.canon.prepare_relocation(old_name, target.stem)
+        result = self.novelforge.rename_universe(d)
+        if result.get('ok'):
+            self.canon.relocate(old_name, target.stem)
+        return result
+
+    def delete_universe_preserving_canon(self, name: str) -> Dict[str, Any]:
+        key = self._existing_universe(name)
+        result = self.novelforge.delete_universe(name)
+        if result.get('ok') and self.canon._root(key).exists():
+            result['canon_retained'] = True
+            result['message'] += ' Separate canon review records were retained for recovery.'
+        return result
+
+    def canon_review(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        name = self._existing_universe(d.get('universe', ''))
+        fact_id = str(d.get('fact_id') or '')
+        return self.canon.review(name, fact_id, str(d.get('decision') or ''))
+
+    def register_generation(self, generation_id: str, token: Cancellation) -> None:
+        with self._generation_lock:
+            self._active_generations[generation_id] = token
+
+    def forget_generation(self, generation_id: str) -> None:
+        with self._generation_lock:
+            self._active_generations.pop(generation_id, None)
+
+    def cancel_generation(self, generation_id: str) -> Dict[str, Any]:
+        with self._generation_lock:
+            token = self._active_generations.get(generation_id)
+        if token is None:
+            return {'ok': False, 'message': 'Generation not found or already finished.'}
+        token.cancel()
+        return {'ok': True, 'cancelled': True, 'generation_id': generation_id}
 
     def test_model_settings(self) -> Dict[str, Any]:
         health = self.provider.health(timeout=5.0)
@@ -172,6 +378,124 @@ class Handler(BaseHTTPRequestHandler):
                 'message': f'Server error: {type(exc).__name__}: {exc}',
             }, code=500)
 
+    def _stream_event(self, event_type: str, payload: Dict[str, Any]) -> None:
+        """Write and flush a single SSE event; caller handles disconnected clients."""
+        frame = (f"event: {event_type}\n"
+                 f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
+        self.wfile.write(frame.encode("utf-8"))
+        self.wfile.flush()
+
+    def _editorial_stream(self, payload: Dict[str, Any]) -> None:
+        """On-demand, read-only editorial streaming; never saves a manuscript."""
+        try:
+            canon_context = self.app.editorial_canon_context(payload)
+            voice_context = self.app.editorial_voice_context(payload)
+            prepared = prepare_editorial(
+                payload, max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000),
+                canon_context=canon_context, voice_context=voice_context)
+        except ValueError as exc:
+            self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            return
+        if not prepared['ok']:
+            self.json_response(prepared, code=400)
+            return
+        token = Cancellation()
+        generation_id = uuid.uuid4().hex
+        self.app.register_generation(generation_id, token)
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache, no-transform')
+            self.send_header('Connection', 'close')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self._stream_event('start', {'generation_id': generation_id, 'ok': True})
+            received = []
+            for event in self.app.provider.stream_chat(
+                    prepared['messages'], max_tokens=prepared['max_tokens'],
+                    temperature=prepared['temperature'], cancellation=token):
+                kind = event.get('type')
+                if kind == 'token':
+                    received.append(event['text'])
+                    self._stream_event('token', {'text': event['text']})
+                elif kind == 'done':
+                    text = ''.join(received)
+                    if not text.strip():
+                        self._stream_event('error', {'message': 'Model returned an empty response.'})
+                    elif prepared['mode'] == 'suggestion' and text.strip() == prepared['draft'].strip():
+                        self._stream_event('error', {'message': 'No changes suggested; original is unchanged.'})
+                    else:
+                        self._stream_event('done', {
+                            'ok': True, 'saved': False, 'source_unchanged': True,
+                            'message': 'Review complete. Original writing unchanged.'
+                        })
+                elif kind == 'cancelled':
+                    self._stream_event('cancelled', {
+                        'ok': True, 'saved': False, 'message': 'Generation stopped; partial suggestion not saved.'
+                    })
+                elif kind == 'error':
+                    self._stream_event('error', {'ok': False,
+                                                 'message': event.get('message', 'Streaming failed.')})
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            token.cancel()
+        finally:
+            self.app.forget_generation(generation_id)
+            token.cancel()
+
+    def _council_stream(self, payload: Dict[str, Any]) -> None:
+        """One author-triggered, cancellable read-only Council run."""
+        try:
+            plan = prepare_council(
+                payload,
+                max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000),
+                canon_context=self.app.editorial_canon_context(payload),
+                voice_context=self.app.editorial_voice_context(payload),
+            )
+            role_models, model_labels = resolve_council_models(
+                plan, self.app.provider, self.app.model_profiles
+            )
+        except (ValueError, TypeError) as exc:
+            self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            return
+        token = Cancellation()
+        generation_id = uuid.uuid4().hex
+        self.app.register_generation(generation_id, token)
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache, no-transform')
+            self.send_header('Connection', 'close')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self._stream_event('start', {
+                'ok': True, 'generation_id': generation_id,
+                'stage': plan['stage'], 'roles': plan['roles'],
+                'call_count': plan['call_count'],
+                'source_fingerprint': plan['source_fingerprint'],
+                'saved': False
+            })
+            for kind, data in council_events(
+                    self.app.provider, plan, token,
+                    role_providers=role_models, model_labels=model_labels):
+                self._stream_event(kind, data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            token.cancel()
+        except Exception as exc:
+            try:
+                self._stream_event('error', {
+                    'ok': False, 'message':
+                    f'Council streaming failed: {type(exc).__name__}: {exc}'
+                })
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+        finally:
+            self.app.forget_generation(generation_id)
+            token.cancel()
+
     # -- routes ---------------------------------------------------------------
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -199,6 +523,43 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/model/health':
             self._guard(lambda: app.provider.health(timeout=5.0))
             return
+        if path == '/api/writer/council/roles':
+            self.json_response({
+                'ok': True,
+                'roles': [
+                    {'id': role, 'label': spec['label']}
+                    for role, spec in ROLES.items()
+                ],
+                'max_roles': MAX_ROLES,
+                'automatic_synthesis': False,
+                'saved_profile_selection': True,
+                'synthesis_model_optional': True,
+                'credentials_scope': 'active endpoint credentials are never sent to a different saved profile base URL',
+                'stored': False,
+                'model': app.provider.display_model(),
+                'message': (
+                    'Choose 1–3 roles; each sequential role makes one explicit '
+                    'model call. A separate synthesis is available on request. '
+                    'No manuscript changes are applied.'
+                ),
+            })
+            return
+        if path == '/api/model/capabilities':
+            self._guard(app.provider.advertised_capabilities)
+            return
+        if path == '/api/model/profiles':
+            self._guard(app.model_profiles.list)
+            return
+        if path == '/api/writer/voice_dna':
+            self._guard(app.voice_dna.list)
+            return
+        if path == '/api/writer/voice_dna/read':
+            self._guard(app.voice_dna.get, q1('id'))
+            return
+        if path == '/api/writer/publishing/book/options':
+            self._guard(app.author_draft_action, app.book_assembler.options,
+                        q1('project_id'), q1('book_id'))
+            return
         # Poetry Forge / archive
         if path == '/api/writer/poetry/archive':
             self._guard(app.poetry.archive)
@@ -215,6 +576,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/read':
             self._guard(app.novelforge.read_universe, q1('name'))
+            return
+        if path == '/api/novelforge/backups':
+            self._guard(app.recovery_backups, q1('name'))
+            return
+        if path == '/api/novelforge/canon':
+            self._guard(app.canon_list, q1('name'))
             return
         # Story Forge reads
         if path == '/api/writer/story/overview':
@@ -236,6 +603,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/writer/story/chapter_editor_preview':
             self._guard(app.storyforge.chapter_editor_preview,
                         {'project_id': q1('project_id'), 'filename': q1('filename')})
+            return
+        if path == '/api/writer/story/branches':
+            self._guard(app.draft_branches.list, q1('project_id'),
+                        q1('book_id'), q1('chapter'))
+            return
+        if path == '/api/writer/story/series_outline':
+            self._guard(app.series_outline.read, q1('project_id'))
+            return
+        if path == '/api/writer/story/scene_board':
+            self._guard(app.scene_board.read, q1('project_id'), q1('book_id'))
+            return
+        if path == '/api/writer/revision/options':
+            self._guard(app.author_draft_action, app.revision_workspace.options,
+                        q1('project_id'), q1('book_id'))
             return
         if path == '/api/writer/story/draft_workspace':
             self._guard(app.storyforge.draft_workspace,
@@ -261,6 +642,70 @@ class Handler(BaseHTTPRequestHandler):
             return
         app = self.app
 
+        if path == '/api/writer/revision/load':
+            self._guard(app.author_draft_action, app.revision_workspace.load, d)
+            return
+        if path == '/api/writer/revision/preview':
+            self._guard(app.author_draft_action, app.revision_workspace.preview, d)
+            return
+        if path == '/api/writer/revision/accept':
+            self._guard(app.author_draft_action, app.revision_workspace.accept, d)
+            return
+        if path == '/api/writer/publishing/book/preview':
+            self._guard(app.author_draft_action, app.book_assembler.preview, d)
+            return
+        if path == '/api/writer/publishing/book/export':
+            try:
+                assembly = app.author_draft_action(
+                    app.book_assembler.verified_book, d
+                )
+                rendered = build_book_export(assembly, d.get('format'))
+                self.send_response(200)
+                self.send_header('Content-Type', rendered['content_type'])
+                self.send_header('Content-Disposition',
+                                 'attachment; filename="' + rendered['filename'] + '"')
+                self.send_header('Content-Length', str(len(rendered['body'])))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                self.wfile.write(rendered['body'])
+            except ValueError as exc:
+                self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if path == '/api/writer/publishing/export':
+            try:
+                rendered = build_export(d)
+                filename = rendered['filename']
+                # build_export owns filename sanitation and MIME validation.
+                self.send_response(200)
+                self.send_header('Content-Type', rendered['content_type'])
+                self.send_header('Content-Disposition',
+                                 'attachment; filename="' + filename + '"')
+                self.send_header('Content-Length', str(len(rendered['body'])))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                self.wfile.write(rendered['body'])
+            except ValueError as exc:
+                self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if path == '/api/writer/council/stream':
+            self._council_stream(d)
+            return
+        if path == '/api/writer/editorial/stream':
+            self._editorial_stream(d)
+            return
+        if path.startswith('/api/generation/') and path.endswith('/cancel'):
+            generation_id = path[len('/api/generation/'):-len('/cancel')].strip('/')
+            if not generation_id or '/' in generation_id:
+                self.json_response({'ok': False, 'message': 'Invalid generation ID'}, code=400)
+            else:
+                self._guard(app.cancel_generation, generation_id)
+            return
         # Poetry Forge / Short Story Forge
         if path == '/api/writer/poetry/create':
             self._guard(app.poetry.create, d)
@@ -289,19 +734,81 @@ class Handler(BaseHTTPRequestHandler):
             return
         # Novel Forge
         if path == '/api/novelforge/save':
-            self._guard(app.novelforge.save_universe, d)
+            self._guard(app.universe_write, app.novelforge.save_universe, d)
             return
         if path == '/api/novelforge/duplicate':
-            self._guard(app.novelforge.duplicate_universe, d)
+            self._guard(app.universe_write, app.novelforge.duplicate_universe, d)
             return
         if path == '/api/novelforge/rename':
-            self._guard(app.novelforge.rename_universe, d)
+            self._guard(app.universe_write, app.rename_universe_with_canon, d)
             return
         if path == '/api/novelforge/delete':
-            self._guard(app.novelforge.delete_universe, d.get('name', ''))
+            self._guard(app.universe_write, app.delete_universe_preserving_canon, d.get('name', ''))
             return
         if path == '/api/novelforge/export':
             self._guard(app.novelforge.export_story_bible, d)
+            return
+        if path == '/api/novelforge/backups/preview':
+            self._guard(app.recovery_preview, d)
+            return
+        if path == '/api/novelforge/backups/restore':
+            self._guard(app.recovery_restore, d)
+            return
+        if path == '/api/novelforge/canon/propose':
+            self._guard(app.canon_propose, d)
+            return
+        if path == '/api/novelforge/canon/review':
+            self._guard(app.canon_review, d)
+            return
+        if path == '/api/novelforge/canon/context':
+            self._guard(app.canon_context_preview, d)
+            return
+        if path == '/api/novelforge/canon/continuity':
+            self._guard(app.canon_continuity_check, d)
+            return
+        if path == '/api/novelforge/canon/chronology':
+            self._guard(app.canon_chronology, d)
+            return
+        if path == '/api/novelforge/canon/relationships':
+            self._guard(app.canon_relationships, d)
+            return
+        if path == '/api/novelforge/canon/knowledge':
+            self._guard(app.canon_knowledge, d)
+            return
+        if path == '/api/writer/story/branches/create':
+            self._guard(app.draft_branches.create, d.get('project_id'),
+                        d.get('book_id'), d.get('filename'), d.get('name'))
+            return
+        if path == '/api/writer/story/branches/read':
+            self._guard(app.draft_branches.read, d.get('project_id'),
+                        d.get('book_id'), d.get('branch_id'))
+            return
+        if path == '/api/writer/story/branches/append':
+            self._guard(app.draft_branches.append, d.get('project_id'),
+                        d.get('book_id'), d.get('branch_id'),
+                        d.get('content'), d.get('expected_revision'))
+            return
+        if path == '/api/writer/story/branches/compare':
+            self._guard(app.draft_branches.compare_source, d.get('project_id'),
+                        d.get('book_id'), d.get('branch_id'))
+            return
+        if path == '/api/writer/story/branches/preview_accept':
+            self._guard(app.author_draft_action,
+                        app.draft_branches.preview_accept,
+                        d.get('project_id'), d.get('book_id'),
+                        d.get('branch_id'))
+            return
+        if path == '/api/writer/story/branches/accept':
+            self._guard(app.author_draft_action,
+                        app.draft_branches.accept,
+                        d.get('project_id'), d.get('book_id'),
+                        d.get('branch_id'), d.get('confirmation_token'))
+            return
+        if path == '/api/writer/story/series_outline/change':
+            self._guard(app.series_outline.change, d)
+            return
+        if path == '/api/writer/story/scene_board/change':
+            self._guard(app.scene_board.change, d)
             return
         # Story Forge actions
         story_routes = {
@@ -324,7 +831,12 @@ class Handler(BaseHTTPRequestHandler):
             '/api/writer/story/prose_refresh_compare': app.storyforge.prose_refresh_compare,
         }
         if path in story_routes:
-            self._guard(story_routes[path], d)
+            if path in (
+                    '/api/writer/story/draft_save_action',
+                    '/api/writer/story/draft_continue_action'):
+                self._guard(app.author_draft_action, story_routes[path], d)
+            else:
+                self._guard(story_routes[path], d)
             return
         # Settings
         if path == '/api/writer/editorial/review':
@@ -338,6 +850,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/config/model/test':
             self._guard(app.test_model_settings)
+            return
+        if path == '/api/writer/voice_dna/create':
+            self._guard(app.voice_dna.create, d.get('profile'))
+            return
+        if path == '/api/writer/voice_dna/delete':
+            self._guard(app.voice_dna.delete, d.get('id'))
+            return
+        if path == '/api/model/profiles/save':
+            self._guard(app.model_profiles.save, d.get('name'), d.get('settings'))
+            return
+        if path == '/api/model/profiles/delete':
+            self._guard(app.model_profiles.delete, d.get('profile_id'))
             return
         self.json_response({'ok': False, 'message': f'Unknown route: {path}'}, code=404)
 

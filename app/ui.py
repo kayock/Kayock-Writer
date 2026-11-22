@@ -125,12 +125,30 @@ summary{cursor:pointer;color:var(--accent3)}
 .cardrow{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
 @media (max-width:900px){
   #burger{display:inline-block}
-  nav#tree{position:fixed;left:0;top:58px;bottom:0;z-index:40;transform:translateX(-105%);
-    transition:transform .18s ease;box-shadow:var(--shadow)}
+  nav#tree{position:fixed;left:0;top:var(--appbar-height, 58px);bottom:0;z-index:40;
+    transform:translateX(-105%);transition:transform .18s ease;
+    box-shadow:var(--shadow);overscroll-behavior:contain}
   nav#tree.open{transform:translateX(0)}
-  #layout{min-height:calc(100vh - 100px)}
-  main{padding:14px}
+  #layout{min-height:calc(100vh - var(--appbar-height, 58px))}
+  main{padding:14px;min-width:0}
 }
+@media (max-width:600px){
+  #appbar .brand small{display:none}
+  #appbar{gap:8px}
+  #modelLabel{overflow-wrap:anywhere}
+}
+
+.scene-lanes{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;align-items:start}
+.scene-lane{min-height:170px;border:1px solid var(--line);background:var(--bg2);border-radius:12px;padding:10px}
+.scene-lane>h4{margin:0 0 10px;color:var(--accent)}
+.scene-note{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:8px;cursor:grab}
+.scene-note strong{display:block;overflow-wrap:anywhere}
+.scene-note .small{white-space:pre-line;overflow-wrap:anywhere}
+.scene-note .row{gap:5px;margin-top:8px}
+.scene-note button{font-size:.78em;padding:4px 8px}
+.scene-lane.drag-hover{outline:2px solid var(--accent3);outline-offset:-3px}
+@media(max-width:1030px){.scene-lanes{grid-template-columns:repeat(2,minmax(220px,1fr))}}
+@media(max-width:610px){.scene-lanes{grid-template-columns:minmax(0,1fr)}}
 """
 
 _JS = r"""
@@ -166,14 +184,31 @@ function show(page){
     novelforge:()=>renderNovelForge(), weaver:()=>renderWeaver(),
     storyoverview:renderStoryOverview, storycreate:renderStoryCreate,
     storychapters:renderStoryChapters, storyeditor:renderStoryEditor,
-    storydrafts:renderStoryDrafts, storyprose:renderStoryProse,
+    storydrafts:renderStoryDrafts, sceneboard:renderSceneBoard, storyprose:renderStoryProse,
     mywriting:()=>renderArchive('mywriting'), finishing:renderFinishing, settings:renderSettings,
   };
   if(renderers[page])renderers[page]();
   window.scrollTo({top:0});
 }
-function openTree(){q('tree').classList.toggle('open');}
-function closeTree(){q('tree').classList.remove('open');}
+function syncNavLayout(){
+  const bar=q('appbar'), tree=q('tree'), burger=q('burger');
+  if(!bar||!tree||!burger)return;
+  // A wrapped mobile header is frequently taller than 58px. Using its
+  // measured height prevents the fixed navigation from covering the bar
+  // or appearing beneath it on narrow screens.
+  document.documentElement.style.setProperty('--appbar-height',bar.offsetHeight+'px');
+  if(window.innerWidth>900)tree.classList.remove('open');
+  burger.setAttribute('aria-expanded',String(tree.classList.contains('open')));
+}
+function openTree(){
+  q('tree').classList.toggle('open');
+  syncNavLayout();
+  if(q('tree').classList.contains('open'))q('tree').querySelector('button.nav')?.focus();
+}
+function closeTree(){
+  q('tree').classList.remove('open');
+  syncNavLayout();
+}
 
 /* ============================ state ============================ */
 const S={
@@ -503,6 +538,343 @@ async function renderNovelForge(){
       </table></div><div class="small" style="margin-top:6px">Folder: ${esc(d.folder||'')}</div>`
     :'<div class="status">No universes yet. Give the forge a name and a premise below, then Save Universe.</div>';
   updateNovelCounts();
+  renderCanon();
+  renderBackupOptions();
+}
+let backupPreviewState=null;
+function clearBackupPreview(){
+  backupPreviewState=null;
+  q('nfBackupRestore').disabled=true;
+  q('nfBackupPreview').textContent='No restore preview. Your saved universe is unchanged.';
+}
+async function renderBackupOptions(){
+  const target=q('nfBackupSelect');
+  if(!target)return;
+  clearBackupPreview();
+  if(!S.novel.active){
+    target.innerHTML='<option value="">Load or save a universe first…</option>';
+    return;
+  }
+  const result=await api('/api/novelforge/backups?name='+encodeURIComponent(S.novel.active));
+  if(!result.ok){
+    target.innerHTML='<option value="">Backups unavailable</option>';
+    q('nfBackupPreview').textContent=result.message||'Could not list backups.';
+    return;
+  }
+  target.innerHTML='<option value="">Select a previous version…</option>'+
+    (result.backups||[]).map(b=>
+      '<option value="'+esc(b.id)+'">'+esc(b.modified)+' · '+esc(b.recorded_premise||'Untitled version')+'</option>'
+    ).join('');
+  if(!(result.backups||[]).length){
+    q('nfBackupPreview').textContent='No previous saves yet. A backup will appear after your next overwrite.';
+  }
+}
+async function previewUniverseBackup(){
+  const selected=q('nfBackupSelect').value;
+  clearBackupPreview();
+  if(!S.novel.active||!selected){
+    q('nfBackupPreview').textContent='Select a saved universe and a backup first.';
+    return;
+  }
+  const d=await api('/api/novelforge/backups/preview',{
+    universe:S.novel.active,backup_id:selected
+  });
+  if(!d.ok){
+    q('nfBackupPreview').textContent=d.message||'Backup preview failed.';
+    return;
+  }
+  const current=d.current||{},snapshot=d.snapshot||{};
+  const counts=x=>Object.entries(x.counts||{}).map(([key,n])=>key+': '+n).join(' · ');
+  q('nfBackupPreview').innerHTML='<div class="card"><strong>Current saved version</strong>'+
+    '<p>'+esc(current.title||'')+' · '+esc(current.modified||'')+'</p>'+
+    '<p>'+esc(current.premise||'')+'</p><div class="small">'+esc(counts(current))+'</div></div>'+
+    '<div class="card"><strong>Backup that would replace it</strong>'+
+    '<p>'+esc(snapshot.title||'')+' · '+esc(snapshot.modified||'')+'</p>'+
+    '<p>'+esc(snapshot.premise||'')+'</p><div class="small">'+esc(counts(snapshot))+'</div></div>'+
+    '<p class="small">Preview only. Existing character, timeline and unknown JSON fields are restored from this exact snapshot. A fresh backup is created before restoration.</p>';
+  backupPreviewState={universe:d.universe,backupId:d.backup_id,token:d.confirmation_token};
+  q('nfBackupRestore').disabled=false;
+}
+async function restoreUniverseBackup(){
+  const state=backupPreviewState;
+  if(!state||!S.novel.active||state.universe!==S.novel.active||
+     q('nfBackupSelect').value!==state.backupId){
+    clearBackupPreview();
+    toast('Preview the selected backup again before restoring.','err');
+    return;
+  }
+  if(!confirm('Restore this previous universe version? The CURRENT saved version will be backed up first. Unsaved editor text is not included in that backup.')){
+    return;
+  }
+  q('nfBackupRestore').disabled=true;
+  const d=await api('/api/novelforge/backups/restore',{
+    universe:state.universe,backup_id:state.backupId,confirmation_token:state.token
+  });
+  if(!d.ok){
+    q('nfBackupPreview').textContent=d.message||'Restore rejected; no changes claimed.';
+    backupPreviewState=null;
+    toast('Restore not completed. Refresh and preview again.','err');
+    return;
+  }
+  backupPreviewState=null;
+  toast('Previous version restored. Your former saved version is backed up.','ok');
+  await loadUniverse(state.universe);
+  renderNovelForge();
+}
+async function renderCanon(){
+  const area=q('nfCanonList');
+  if(!area)return;
+  if(!S.novel.active){
+    area.textContent='Load or save a universe first. No canon changes occur automatically.';
+    return;
+  }
+  const d=await api('/api/novelforge/canon?name='+encodeURIComponent(S.novel.active));
+  if(!d.ok){area.textContent=d.message||'Could not load canon.';return;}
+  const facts=d.facts||[];
+  if(!facts.length){
+    area.textContent='No canon facts yet. Propose a fact with a source passage below.';
+    return;
+  }
+  const counts=['proposed','approved','rejected']
+    .map(state=>'<span class="chip">'+state+': '+facts.filter(f=>f.state===state).length+'</span>').join(' ');
+  area.innerHTML=counts+facts.map(f=>{
+    const evidence=(f.evidence||[]).map(e=>'<div class="small">'+esc(e.source)+': “'+esc(e.quote)+'”</div>').join('');
+    const action=f.state==='proposed'
+      ?'<div class="row"><button class="btn primary" onclick="reviewCanonFact(\''+f.id+'\',\'approved\')">Approve</button> '+
+       '<button class="btn" onclick="reviewCanonFact(\''+f.id+'\',\'rejected\')">Reject</button></div>'
+      :'';
+    return '<div class="card" style="margin-top:10px"><strong>'+esc(f.kind)+': '+esc(f.subject)+'</strong> '+
+      '<span class="chip">'+esc(f.state)+'</span><p>'+esc(f.claim)+'</p>'+
+      (f.chapter?'<div class="small">Chapter: '+esc(f.chapter)+'</div>':'')+
+      (f.world_time?'<div class="small">World time: '+esc(f.world_time)+'</div>':'')+
+      (f.related_to?'<div class="small">Explicit relationship: '+esc(f.subject)+' → '+esc(f.related_to)+
+        ' ('+esc(f.relation_type||'unspecified')+')</div>':'')+
+      ((f.known_by||[]).length?'<div class="small">Explicitly known by: '+esc(f.known_by.join(', '))+
+        (f.learned_time?' · learned '+esc(f.learned_time):' · learning time unspecified')+'</div>':'')+
+      evidence+action+'</div>';
+  }).join('');
+}
+function toggleCanonRelationshipFields(){
+  q('nfCanonRelationshipFields').style.display=q('nfCanonKind').value==='relationship'?'block':'none';
+}
+async function proposeCanonFact(){
+  if(!S.novel.active){toast('Save or load a universe before proposing canon.','err');return;}
+  const payload={
+    universe:S.novel.active, kind:q('nfCanonKind').value,
+    subject:q('nfCanonSubject').value,claim:q('nfCanonClaim').value,
+    source:q('nfCanonSource').value,quote:q('nfCanonQuote').value,
+    chapter:q('nfCanonChapter').value,world_time:q('nfCanonWorldTime').value,
+    narrative_order:q('nfCanonNarrative').value,
+    known_by:q('nfCanonKnownBy').value.split(',').map(x=>x.trim()).filter(Boolean),
+    learned_time:q('nfCanonLearnedTime').value,
+    related_to:q('nfCanonKind').value==='relationship'?q('nfCanonRelatedTo').value:'',
+    relation_type:q('nfCanonKind').value==='relationship'?q('nfCanonRelationType').value:'',
+  };
+  const d=await api('/api/novelforge/canon/propose',payload);
+  toast(d.message||(d.ok?'Fact proposed for review.':'Proposal rejected.'),d.ok?'ok':'err');
+  if(d.ok){
+    ['nfCanonSubject','nfCanonClaim','nfCanonSource','nfCanonQuote',
+     'nfCanonKnownBy','nfCanonLearnedTime',
+     'nfCanonRelatedTo','nfCanonRelationType'].forEach(id=>q(id).value='');
+    renderCanon();
+  }
+}
+async function reviewCanonFact(factId,decision){
+  if(!S.novel.active || !['approved','rejected'].includes(decision))return;
+  if(!confirm((decision==='approved'?'Approve':'Reject')+' this proposed canon fact?'))return;
+  const d=await api('/api/novelforge/canon/review',{
+    universe:S.novel.active,fact_id:factId,decision});
+  toast(d.message||(d.ok?'Fact '+decision+'.':'Review failed.'),d.ok?'ok':'err');
+  if(d.ok)renderCanon();
+}
+function clearRelationshipFocus(){
+  q('nfGraphFocus').value='';
+  renderRelationshipGraph();
+}
+async function renderRelationshipGraph(){
+  const status=q('nfGraphStatus');
+  const target=q('nfGraph');
+  const evidence=q('nfGraphEvidence');
+  target.replaceChildren();
+  evidence.replaceChildren();
+  if(!S.novel.active){
+    status.textContent='Load a saved universe first.';
+    return;
+  }
+  status.textContent='Reading author-approved relationship facts…';
+  const result=await api('/api/novelforge/canon/relationships',{
+    universe:S.novel.active,focus:q('nfGraphFocus').value.trim(),
+    max_edges:150
+  });
+  if(!result.ok){
+    status.textContent=result.message||'Relationship graph unavailable.';
+    return;
+  }
+  status.textContent=result.edge_count+' approved link(s) drawn. '+
+    result.unstructured_approved_relationships+
+    ' older relationship claim(s) have no explicit endpoints and were not guessed.'+
+    (result.truncated?' Showing first 150 matching edges.':'');
+  if(!(result.nodes||[]).length){
+    evidence.textContent='No approved, explicitly linked relationships match. Propose a relationship with source and target, then approve it.';
+    return;
+  }
+  const ns='http://www.w3.org/2000/svg';
+  const mk=(tag,attrs={})=>{
+    const item=document.createElementNS(ns,tag);
+    for(const [k,v] of Object.entries(attrs))item.setAttribute(k,String(v));
+    return item;
+  };
+  const width=860,height=570,cx=width/2,cy=height/2;
+  const nodes=result.nodes;
+  const svg=mk('svg',{viewBox:'0 0 860 570',width:'100%',role:'img',
+    'aria-label':'Approved Story Bible relationship diagram'});
+  svg.style.maxWidth='860px';
+  svg.style.minWidth='420px';
+  svg.style.background='transparent';
+  const positions={};
+  nodes.forEach((node,i)=>{
+    const angle=2*Math.PI*i/nodes.length-Math.PI/2;
+    const distance=nodes.length===1?0:Math.min(225,110+nodes.length*8);
+    positions[node.id]={
+      x:cx+Math.cos(angle)*distance,
+      y:cy+Math.sin(angle)*distance
+    };
+  });
+  for(const edge of result.edges){
+    const a=positions[edge.source],b=positions[edge.target];
+    if(!a||!b)continue;
+    svg.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,
+      stroke:'currentColor','stroke-opacity':'0.38','stroke-width':'2'}));
+    if(result.edges.length<=20){
+      const label=mk('text',{x:(a.x+b.x)/2,y:(a.y+b.y)/2-6,
+        'text-anchor':'middle','font-size':'11',fill:'currentColor'});
+      label.textContent=edge.relation_type;
+      svg.appendChild(label);
+    }
+  }
+  for(const node of nodes){
+    const p=positions[node.id];
+    const group=mk('g',{role:'button',tabindex:'0','aria-label':'Focus '+node.name});
+    const circle=mk('circle',{cx:p.x,cy:p.y,r:21,fill:'#7552bd',
+      stroke:'currentColor','stroke-width':'1.4'});
+    const text=mk('text',{x:p.x,y:p.y+39,'text-anchor':'middle',
+      'font-size':'12',fill:'currentColor'});
+    const title=mk('title');
+    title.textContent=node.name+' ('+node.degree+' connection(s)); click to focus';
+    text.textContent=node.name.length>24?node.name.slice(0,23)+'…':node.name;
+    group.appendChild(title);
+    group.appendChild(circle);
+    group.appendChild(text);
+    const focus=()=>{q('nfGraphFocus').value=node.name;renderRelationshipGraph();};
+    group.addEventListener('click',focus);
+    group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();focus();}});
+    group.style.cursor='pointer';
+    svg.appendChild(group);
+  }
+  target.appendChild(svg);
+  const intro=document.createElement('p');
+  intro.textContent='Evidence for every visible edge:';
+  evidence.appendChild(intro);
+  for(const edge of result.edges){
+    const block=document.createElement('div');
+    block.className='card';
+    const header=document.createElement('strong');
+    header.textContent=edge.source_name+' → '+edge.target_name+' · '+edge.relation_type;
+    block.appendChild(header);
+    const claim=document.createElement('p');
+    claim.textContent=edge.claim;
+    block.appendChild(claim);
+    const citation=document.createElement('div');
+    citation.className='small';
+    citation.textContent='Fact '+edge.fact_id+' · World time: '+(edge.world_time||'not specified')+
+      ' · Narrative order: '+(edge.narrative_order||'not specified');
+    block.appendChild(citation);
+    for(const src of edge.evidence){
+      const el=document.createElement('div');
+      el.className='small';
+      el.textContent='Source: '+src.source+' — “'+src.quote+'”';
+      block.appendChild(el);
+    }
+    evidence.appendChild(block);
+  }
+}
+async function previewCanonContext(){
+  const target=q('nfCanonPreview');
+  if(!S.novel.active){target.textContent='Load or save a universe first.';return;}
+  target.textContent='Retrieving relevant approved facts…';
+  const d=await api('/api/novelforge/canon/context',{
+    universe:S.novel.active,query:q('nfCanonSearch').value,
+    limit:Number(q('nfCanonMax').value)
+  });
+  if(!d.ok){target.textContent=d.message||'Retrieval failed.';return;}
+  const facts=d.facts||[];
+  const rows=facts.map(f=>'<div class="card"><strong>'+esc(f.subject)+'</strong> — '+esc(f.claim)+
+    '<div class="small">Relevance '+f.relevance_score+' · '+esc(f.kind)+' · Fact '+esc(f.id)+'</div>'+
+    (f.evidence||[]).map(e=>'<div class="small">Source '+esc(e.source)+': “'+esc(e.quote)+'”</div>').join('')+
+    '</div>').join('');
+  target.innerHTML='<div class="status">'+d.selected_total+' of '+d.approved_total+
+    ' approved facts selected; '+d.matched_total+' relevant matches. Estimated reference tokens: '+
+    d.estimated_tokens+' (advisory only; model context settings unchanged).</div>'+
+    (rows||'<p>No approved facts match this passage.</p>')+
+    '<details><summary>View copyable reference context</summary>'+
+    '<textarea readonly class="big">'+esc(d.context_text||'No matching approved facts.')+'</textarea></details>';
+}
+async function checkCanonDraft(){
+  const target=q('nfCanonWarnings');
+  if(!S.novel.active){target.textContent='Load or save a universe first.';return;}
+  const draft=q('nfCanonDraft').value;
+  if(!draft.trim()){target.textContent='Paste a draft excerpt first.';return;}
+  target.textContent='Checking explicit continuity tensions…';
+  const d=await api('/api/novelforge/canon/continuity',{
+    universe:S.novel.active,text:draft,
+    world_time:q('nfCanonDraftWorldTime').value.trim()});
+  if(!d.ok){target.textContent=d.message||'Continuity check failed.';return;}
+  const rows=(d.alerts||[]).map(a=>'<div class="card"><strong>Possible tension: '+
+    esc(a.subject)+'</strong><p>'+esc(a.draft_excerpt)+'</p>'+
+    '<div class="small">Approved reference: '+esc(a.approved_claim)+'</div>'+
+    (a.evidence||[]).map(e=>'<div class="small">'+esc(e.source)+': “'+esc(e.quote)+'”</div>').join('')+
+    '<div class="small">'+esc(a.explanation)+'</div></div>').join('');
+  target.innerHTML='<div class="status">'+d.alert_count+' possible tension(s) in '+
+    d.reviewed_approved_facts+' approved facts. These are suggestions, not proven errors.'+
+    ' Your passage was not changed.</div>'+
+    (rows||'<p>No explicit opposite statements found. This does not prove full continuity.</p>');
+}
+async function viewCanonChronology(){
+  const target=q('nfCanonChronology');
+  if(!S.novel.active){target.textContent='Load a universe first.';return;}
+  const result=await api('/api/novelforge/canon/chronology',{universe:S.novel.active});
+  if(!result.ok){target.textContent=result.message||'Chronology unavailable.';return;}
+  const grouped=(result.groups||[]).map(group=>
+    '<div class="card"><strong>'+esc(group.label)+'</strong>'+
+    group.facts.map(f=>'<p>'+esc(f.world_time)+' · '+esc(f.subject)+': '+esc(f.claim)+
+      '<span class="small"> ['+esc(f.narrative_order||'narrative order unknown')+']</span></p>').join('')+
+    '</div>').join('');
+  const unknown=(result.unplaced||[]).map(f=>'<p>'+esc(f.world_time||'Unspecified time')+
+    ' · '+esc(f.subject)+': '+esc(f.claim)+'</p>').join('');
+  target.innerHTML='<div class="status">'+result.total+' approved fact(s); world time is separate from narrative order.</div>'+
+    (grouped||'<p>No sortable approved facts.</p>')+
+    (unknown?'<div class="card"><strong>Unplaced (not ordered)</strong>'+unknown+'</div>':'');
+}
+async function viewCharacterKnowledge(){
+  const target=q('nfCanonKnowledge');
+  if(!S.novel.active){target.textContent='Load a universe first.';return;}
+  const name=q('nfKnowledgeCharacter').value.trim();
+  if(!name){target.textContent='Name the character to inspect.';return;}
+  const result=await api('/api/novelforge/canon/knowledge',{
+    universe:S.novel.active,character:name,at_world_time:q('nfKnowledgeTime').value.trim()
+  });
+  if(!result.ok){target.textContent=result.message||'Could not inspect knowledge.';return;}
+  const row=f=>'<div class="card"><strong>'+esc(f.subject)+'</strong>: '+esc(f.claim)+
+    '<div class="small">Author marked known at: '+esc(f.learned_time||'not specified')+
+    ' · world event: '+esc(f.world_time||'unspecified')+'</div>'+
+    (f.evidence||[]).map(e=>'<div class="small">Source '+esc(e.source)+': '+esc(e.quote)+'</div>').join('')+
+    '</div>';
+  target.innerHTML='<div class="status">'+result.count+' author-assigned known fact(s). '+
+    result.time_uncertain_facts.length+' excluded from time-specific conclusions; '+
+    result.later_known_facts_excluded+' learned later.</div>'+
+    ((result.facts||[]).map(row).join('')||'<p>No explicitly marked knowledge matches.</p>')+
+    (result.time_uncertain_facts.length?'<details><summary>Facts with unknown or incomparable learning time</summary>'+
+      result.time_uncertain_facts.map(row).join('')+'</details>':'');
 }
 function updateNovelCounts(){
   const cnt=list=>q(list).value.split('\n').filter(x=>x.trim()).length;
@@ -520,7 +892,7 @@ async function loadUniverse(name){
   }
   q('nfNotes').value=d.notes||'';
   q('nfStatus').textContent=`Loaded universe: ${d.universe||name}`;
-  updateNovelCounts();toast('Universe loaded.','ok');
+  updateNovelCounts();renderCanon();renderBackupOptions();toast('Universe loaded.','ok');
 }
 async function saveUniverse(){
   const payload={
@@ -545,11 +917,13 @@ async function renameUniverse(name,title){
   const new_title=prompt('Rename universe to:',title||name);
   if(!new_title)return;
   const d=await api('/api/novelforge/rename',{name,new_title});
+  if(d.ok && S.novel.active===name)S.novel.active=d.name;
   toast(d.message||'Done.',d.ok?'ok':'err');renderNovelForge();
 }
 async function deleteUniverse(name,title){
-  if(!confirm(`Delete the universe "${title||name}"? Its JSON and Markdown mirror are removed.`))return;
+  if(!confirm(`Delete the universe "${title||name}"? Its JSON and Markdown mirror are removed. Separate canon records are retained for recovery.`))return;
   const d=await api('/api/novelforge/delete',{name});
+  if(d.ok && S.novel.active===name)S.novel.active=null;
   toast(d.message||'Done.',d.ok?'ok':'err');renderNovelForge();
 }
 /* codex card helpers: structured input -> list line */
@@ -780,6 +1154,328 @@ async function storyEditorApply(){
   q('storyEditorStatus').className='status '+(d.ok?'ok':'err');
   if(d.ok)storyEditorLoad();
 }
+/* ========================= visual scene corkboard ========================= */
+const sceneBoardState={board:null,revision:null,busy:false,editing:null};
+const SCENE_LANES=[
+  ['ideas','Ideas'],['outlined','Outlined'],['drafting','Drafting'],
+  ['revising','Revising'],['ready','Ready'],['parked','Parked']
+];
+/* ========================= series / book / act outline ========================= */
+const seriesPlanState={project:'',revision:null,outline:null,busy:false};
+async function seriesOutlineRefresh(){
+  const project=q('sceneBoardProject').value;
+  seriesPlanState.project=project;
+  seriesPlanState.revision=null;
+  seriesPlanState.outline=null;
+  if(!project){
+    q('seriesPlanStatus').textContent='Choose a Story Forge project.';
+    return;
+  }
+  const d=await api('/api/writer/story/series_outline?project_id='+encodeURIComponent(project));
+  if(project!==q('sceneBoardProject').value)return;
+  if(!d.ok){
+    q('seriesPlanStatus').textContent=d.message||'Series outline unavailable.';
+    return;
+  }
+  seriesPlanState.revision=d.revision;
+  seriesPlanState.outline=d.outline;
+  q('seriesPlanTitle').value=d.outline.series_title||'';
+  q('seriesPlanNotes').value=d.outline.series_notes||'';
+  q('seriesPlanStatus').textContent='Series and acts are an optional planning layer. Existing project and draft files are unchanged.';
+  q('seriesPlanStatus').className='status';
+  seriesOutlineDraw();
+  sceneBoardRefreshOptions();
+}
+function seriesOutlineDraw(){
+  const target=q('seriesPlanActs');
+  target.replaceChildren();
+  const outline=seriesPlanState.outline;
+  if(!outline)return;
+  const current=q('sceneBoardBook').value;
+  const acts=outline.acts.filter(act=>act.book_id===current);
+  const label=document.createElement('div');
+  label.className='small';
+  label.textContent=acts.length+' act(s) in the selected book. Act identifiers remain stable when renamed.';
+  target.appendChild(label);
+  for(const act of acts){
+    const row=document.createElement('div');
+    row.className='card';
+    const title=document.createElement('strong');
+    title.textContent=act.title;
+    const summary=document.createElement('p');
+    summary.textContent=act.summary||'(No act summary)';
+    const edit=document.createElement('button');
+    edit.className='btn';
+    edit.textContent='Edit act';
+    edit.addEventListener('click',()=>seriesEditAct(act.id));
+    row.appendChild(title);row.appendChild(summary);row.appendChild(edit);
+    target.appendChild(row);
+  }
+}
+async function seriesOutlineChange(change){
+  if(seriesPlanState.busy||!seriesPlanState.revision||
+      seriesPlanState.project!==q('sceneBoardProject').value)return false;
+  seriesPlanState.busy=true;
+  let d;
+  try{
+    d=await api('/api/writer/story/series_outline/change',{
+      project_id:seriesPlanState.project,
+      expected_revision:seriesPlanState.revision,
+      ...change
+    });
+  }catch(e){
+    d={ok:false,message:String(e)};
+  }finally{
+    seriesPlanState.busy=false;
+  }
+  if(seriesPlanState.project!==q('sceneBoardProject').value)return false;
+  q('seriesPlanStatus').textContent=d.message||'Series outline update failed.';
+  q('seriesPlanStatus').className='status '+(d.ok?'ok':'err');
+  if(!d.ok)return false;
+  seriesPlanState.revision=d.revision;
+  seriesPlanState.outline=d.outline;
+  seriesOutlineDraw();
+  await sceneBoardRefreshOptions();
+  return true;
+}
+function seriesSaveDetails(){
+  return seriesOutlineChange({action:'details',
+    series_title:q('seriesPlanTitle').value,
+    series_notes:q('seriesPlanNotes').value});
+}
+async function seriesAddAct(){
+  const title=q('seriesActTitle').value.trim();
+  const summary=q('seriesActSummary').value;
+  if(!title){q('seriesPlanStatus').textContent='Name the act first.';return;}
+  const saved=await seriesOutlineChange({action:'act_add',
+    book_id:q('sceneBoardBook').value,title,summary});
+  if(saved){q('seriesActTitle').value='';q('seriesActSummary').value='';}
+}
+async function seriesEditAct(id){
+  const act=seriesPlanState.outline&&seriesPlanState.outline.acts.find(a=>a.id===id);
+  if(!act)return;
+  const title=prompt('Rename act (stable scene links will be preserved):',act.title);
+  if(title===null)return;
+  const summary=prompt('Act description:',act.summary);
+  if(summary===null)return;
+  await seriesOutlineChange({action:'act_edit',act_id:id,title,summary});
+}
+async function sceneBoardRefreshOptions(){
+  const actSelect=q('sceneBoardAct');
+  const draftSelect=q('sceneBoardDraft');
+  const existingAct=actSelect.value,existingDraft=draftSelect.value;
+  actSelect.replaceChildren();
+  draftSelect.replaceChildren();
+  actSelect.appendChild(new Option('No act assigned',''));
+  draftSelect.appendChild(new Option('No chapter draft linked',''));
+  const book=q('sceneBoardBook').value;
+  const outline=seriesPlanState.outline;
+  for(const act of (outline&&outline.acts||[]).filter(a=>a.book_id===book))
+    actSelect.appendChild(new Option(act.title,act.id));
+  const project=q('sceneBoardProject').value;
+  if(!project||!book)return;
+  const result=await api('/api/writer/story/draft_version_history?project_id='+
+    encodeURIComponent(project)+'&book_id='+encodeURIComponent(book));
+  if(project!==q('sceneBoardProject').value||book!==q('sceneBoardBook').value)return;
+  for(const version of (result.ok&&result.versions||[])){
+    if(version.exists){
+      draftSelect.appendChild(new Option(version.chapter+' · v'+version.version+
+        ' · '+version.filename,version.filename));
+    }
+  }
+  if([...actSelect.options].some(o=>o.value===existingAct))actSelect.value=existingAct;
+  if([...draftSelect.options].some(o=>o.value===existingDraft))draftSelect.value=existingDraft;
+}
+function sceneBoardClearEditor(){
+  sceneBoardState.editing=null;
+  for(const name of ['Title','Chapter','Pov','Location','Summary','Beats'])
+    q('sceneBoard'+name).value='';
+  q('sceneBoardAct').value='';
+  q('sceneBoardDraft').value='';
+  q('sceneBoardEditLabel').textContent='New scene card';
+  q('sceneBoardSave').textContent='Add scene';
+}
+function sceneBoardUpdateBooks(){
+  const project=q('sceneBoardProject').value;
+  const item=S.projects.find(p=>p.project_id===project);
+  const book=q('sceneBoardBook');
+  const selected=book.value||S.story.book;
+  const books=(item&&item.books)||[];
+  book.replaceChildren();
+  for(const b of books)book.appendChild(new Option(b.title||b.id,b.id));
+  if(books.some(b=>b.id===selected))book.value=selected;
+  sceneBoardClearEditor();
+}
+async function renderSceneBoard(){
+  await loadProjects();
+  const project=q('sceneBoardProject');
+  const selected=project.value||S.story.project;
+  project.innerHTML=projectOptions(selected);
+  if(S.projects.some(p=>p.project_id===selected))project.value=selected;
+  sceneBoardUpdateBooks();
+  await seriesOutlineRefresh();
+  await sceneBoardRefresh();
+}
+async function sceneBoardRefresh(){
+  const project=q('sceneBoardProject').value;
+  const book=q('sceneBoardBook').value;
+  sceneBoardState.board=null;
+  sceneBoardState.revision=null;
+  const target=q('sceneBoardLanes');
+  target.replaceChildren();
+  if(!project||!book){
+    q('sceneBoardStatus').textContent='Create or select a Story Forge project and book first.';
+    return;
+  }
+  q('sceneBoardStatus').textContent='Loading saved scene plan…';
+  const result=await api('/api/writer/story/scene_board?project_id='+encodeURIComponent(project)+
+      '&book_id='+encodeURIComponent(book));
+  if(project!==q('sceneBoardProject').value||book!==q('sceneBoardBook').value)return;
+  if(!result.ok){
+    q('sceneBoardStatus').textContent=result.message||'Unable to load scene board.';
+    return;
+  }
+  sceneBoardState.board=result.board;
+  sceneBoardState.revision=result.revision;
+  await sceneBoardRefreshOptions();
+  q('sceneBoardStatus').textContent='Planning board loaded. Manuscripts and versioned drafts remain separate.';
+  q('sceneBoardStatus').className='status';
+  sceneBoardDraw();
+}
+async function sceneBoardChange(change){
+  if(sceneBoardState.busy||!sceneBoardState.board||!sceneBoardState.revision)return false;
+  sceneBoardState.busy=true;
+  const project=q('sceneBoardProject').value,book=q('sceneBoardBook').value;
+  q('sceneBoardSave').disabled=true;
+  let result;
+  try{
+    result=await api('/api/writer/story/scene_board/change',{
+      project_id:project,book_id:book,expected_revision:sceneBoardState.revision,...change
+    });
+  }catch(e){
+    result={ok:false,message:'Could not reach scene board: '+String(e)};
+  }finally{
+    sceneBoardState.busy=false;
+    q('sceneBoardSave').disabled=false;
+  }
+  if(project!==q('sceneBoardProject').value||book!==q('sceneBoardBook').value)return false;
+  if(!result.ok){
+    q('sceneBoardStatus').textContent=result.message||'Scene board change rejected.';
+    q('sceneBoardStatus').className='status err';
+    toast('Scene not saved. Refresh to resolve an outdated board.','err');
+    return false;
+  }
+  sceneBoardState.board=result.board;
+  sceneBoardState.revision=result.revision;
+  q('sceneBoardStatus').textContent='Scene plan saved; chapter drafts and manuscripts unchanged.';
+  q('sceneBoardStatus').className='status ok';
+  await sceneBoardRefresh();
+  return true;
+}
+async function sceneBoardSave(){
+  const fields={title:q('sceneBoardTitle').value,chapter:q('sceneBoardChapter').value,
+    pov:q('sceneBoardPov').value,location:q('sceneBoardLocation').value,
+    summary:q('sceneBoardSummary').value,beats:q('sceneBoardBeats').value,
+    act_id:q('sceneBoardAct').value,draft_filename:q('sceneBoardDraft').value};
+  const id=sceneBoardState.editing;
+  const saved=await sceneBoardChange(id?
+    {action:'update',card_id:id,fields}:{action:'add',status:'ideas',fields});
+  if(saved)sceneBoardClearEditor();
+}
+function sceneBoardEdit(cardId){
+  const c=sceneBoardState.board&&sceneBoardState.board.cards.find(x=>x.id===cardId);
+  if(!c)return;
+  sceneBoardState.editing=cardId;
+  const fields=[['title','Title'],['chapter','Chapter'],['pov','Pov'],
+    ['location','Location'],['summary','Summary'],['beats','Beats']];
+  for(const [key,id] of fields)q('sceneBoard'+id).value=c[key]||'';
+  q('sceneBoardAct').value=c.act_id||'';
+  q('sceneBoardDraft').value=c.draft_filename||'';
+  q('sceneBoardEditLabel').textContent='Edit scene: '+c.title;
+  q('sceneBoardSave').textContent='Save scene changes';
+  q('sceneBoardTitle').focus();
+}
+async function sceneBoardMove(id,status,beforeId){
+  if(!sceneBoardState.board)return;
+  const c=sceneBoardState.board.cards.find(x=>x.id===id);
+  if(!c)return;
+  const same=sceneBoardState.board.cards.filter(x=>x.status===status);
+  if(c.status===status&&!beforeId&&same[same.length-1]===c)return;
+  await sceneBoardChange({action:'move',card_id:id,status,before_id:beforeId||null});
+}
+function sceneBoardDraw(){
+  const board=sceneBoardState.board;
+  const root=q('sceneBoardLanes');
+  root.replaceChildren();
+  if(!board)return;
+  const mk=(tag,value,cls)=>{
+    const el=document.createElement(tag);
+    if(value!=null)el.textContent=value;
+    if(cls)el.className=cls;
+    return el;
+  };
+  for(const [lane,label] of SCENE_LANES){
+    const col=mk('div',null,'scene-lane');
+    col.dataset.lane=lane;
+    const cards=board.cards.filter(c=>c.status===lane);
+    col.appendChild(mk('h4',label+' · '+cards.length));
+    col.addEventListener('dragover',e=>{
+      e.preventDefault();col.classList.add('drag-hover');
+    });
+    col.addEventListener('dragleave',e=>{
+      if(!col.contains(e.relatedTarget))col.classList.remove('drag-hover');
+    });
+    col.addEventListener('drop',async e=>{
+      e.preventDefault();col.classList.remove('drag-hover');
+      const id=e.dataTransfer&&e.dataTransfer.getData('text/plain');
+      if(id)await sceneBoardMove(id,lane,null);
+    });
+    for(let i=0;i<cards.length;i++){
+      const card=cards[i];
+      const note=mk('div',null,'scene-note');
+      note.draggable=true;
+      note.addEventListener('dragstart',e=>{
+        e.dataTransfer.setData('text/plain',card.id);e.dataTransfer.effectAllowed='move';
+      });
+      note.addEventListener('dragover',e=>e.preventDefault());
+      note.addEventListener('drop',async e=>{
+        e.preventDefault();e.stopPropagation();
+        const id=e.dataTransfer&&e.dataTransfer.getData('text/plain');
+        if(id&&id!==card.id)await sceneBoardMove(id,lane,card.id);
+      });
+      note.appendChild(mk('strong',card.title));
+      if(card.chapter)note.appendChild(mk('div','Chapter: '+card.chapter,'small'));
+      if(card.act_id)note.appendChild(mk('div','Act: '+(card.act_title||'unresolved act'),'small'));
+      if(card.draft_filename){
+        note.appendChild(mk('div',(card.draft_valid?'Linked draft: ':'Unresolved draft link: ')+
+          card.draft_filename,'small'));
+      }
+      const meta=[card.pov&&'POV '+card.pov,card.location&&'Location '+card.location]
+        .filter(Boolean).join(' · ');
+      if(meta)note.appendChild(mk('div',meta,'small'));
+      if(card.summary)note.appendChild(mk('div',card.summary,'small'));
+      if(card.beats)note.appendChild(mk('div','Beats: '+card.beats,'small'));
+      const row=mk('div',null,'row');
+      const action=(label,click,disabled=false)=>{
+        const b=mk('button',label,'btn');
+        b.type='button';b.disabled=disabled;b.addEventListener('click',click);row.appendChild(b);
+      };
+      action('Edit',()=>sceneBoardEdit(card.id));
+      action('↑',()=>sceneBoardMove(card.id,lane,cards[i-1]&&cards[i-1].id),i===0);
+      action('↓',()=>sceneBoardMove(card.id,lane,cards[i+2]&&cards[i+2].id),i===cards.length-1);
+      const select=mk('select');
+      select.setAttribute('aria-label','Move '+card.title+' to another lane');
+      for(const [id,title] of SCENE_LANES)select.appendChild(new Option(title,id));
+      select.value=lane;
+      select.addEventListener('change',()=>sceneBoardMove(card.id,select.value,null));
+      row.appendChild(select);
+      action('Park',()=>sceneBoardMove(card.id,'parked',null),lane==='parked');
+      note.appendChild(row);
+      col.appendChild(note);
+    }
+    root.appendChild(col);
+  }
+}
 async function renderStoryDrafts(){
   await loadProjects();
   q('storyDraftsProject').innerHTML=projectOptions(S.story.project);
@@ -792,6 +1488,13 @@ async function storyDraftsRefresh(){
     q('storyDraftsInfo').textContent=`${vs.length} version(s) saved for this chapter.`;
     const opts=vs.map(v=>`<option>${esc(v.filename)}</option>`).join('');
     q('storyDraftsLeft').innerHTML=opts;q('storyDraftsRight').innerHTML=opts;
+    const source=q('storyBranchSource');
+    const old=source.value;
+    source.replaceChildren();
+    source.appendChild(new Option('Choose saved chapter version…',''));
+    for(const v of vs)source.appendChild(new Option(v.filename,v.filename));
+    if(vs.some(v=>v.filename===old))source.value=old;
+
   }
   const h=await api(`/api/writer/story/draft_version_history?project_id=${encodeURIComponent(q('storyDraftsProject').value)}&book_id=${encodeURIComponent(q('storyDraftsBook').value)}&chapter=${encodeURIComponent(q('storyDraftsChapter').value)}`);
   if(h&&h.ok){
@@ -801,6 +1504,7 @@ async function storyDraftsRefresh(){
         </table></div>`
       :'<div class="status">No draft versions yet.</div>';
   }
+  await storyBranchRefresh();
 }
 async function storyDraftsSave(stage){
   const payload={project_id:q('storyDraftsProject').value,book_id:q('storyDraftsBook').value,
@@ -820,6 +1524,201 @@ async function storyDraftsContinue(stage){
     base_version:d.base_version},null,2):(d.message||'Failed.');
   q('storyDraftsStatus').className='status '+(d.ok?'ok':'err');
   if(stage==='action'&&d.ok)storyDraftsRefresh();
+}
+/* ==================== isolated chapter draft branches ==================== */
+const storyBranchState={id:null,revision:null,loadedText:'',busy:false,acceptPreview:null};
+function storyBranchClearAcceptance(){
+  storyBranchState.acceptPreview=null;
+  q('storyBranchAccept').disabled=true;
+  q('storyBranchAcceptStatus').textContent='Preview the exact saved alternative and current main draft before accepting.';
+}
+async function storyBranchRefresh(){
+  storyBranchClearAcceptance();
+  const project=q('storyDraftsProject').value;
+  const book=q('storyDraftsBook').value;
+  const chapter=q('storyDraftsChapter').value;
+  const r=await api('/api/writer/story/branches?project_id='+encodeURIComponent(project)+
+    '&book_id='+encodeURIComponent(book)+'&chapter='+encodeURIComponent(chapter));
+  const select=q('storyBranchSelect');
+  const previous=select.value;
+  select.replaceChildren();
+  select.appendChild(new Option('Select an alternative…',''));
+  if(!r.ok){
+    q('storyBranchStatus').textContent=r.message||'Alternatives unavailable.';
+    storyBranchState.id=null;storyBranchState.revision=null;
+    return;
+  }
+  for(const b of r.branches||[]){
+    select.appendChild(new Option(b.name+' · '+b.versions+' version(s) · '+b.chapter,b.id));
+  }
+  if((r.branches||[]).some(b=>b.id===previous))select.value=previous;
+  q('storyBranchInfo').textContent=(r.branches||[]).length+
+    ' saved alternative(s) for this chapter. Existing draft version history is separate.'+
+    (r.damaged_branches?' '+r.damaged_branches+' damaged branch(es) ignored.':'');
+  if(storyBranchState.id && !(r.branches||[]).some(b=>b.id===storyBranchState.id)){
+    storyBranchState.id=null;storyBranchState.revision=null;
+  }
+}
+function storyBranchPayload(){
+  return {project_id:q('storyDraftsProject').value,book_id:q('storyDraftsBook').value};
+}
+function storyBranchWouldReplaceUnsaved(){
+  const current=q('storyBranchText').value;
+  return current && current!==storyBranchState.loadedText &&
+    !confirm('Discard the unsaved alternative text in the branch editor? It is not saved elsewhere.');
+}
+async function storyBranchCreate(){
+  if(storyBranchState.busy||storyBranchWouldReplaceUnsaved())return;
+  const filename=q('storyBranchSource').value;
+  const name=q('storyBranchName').value.trim();
+  if(!filename||!name){
+    q('storyBranchStatus').textContent='Choose a saved chapter version and name the new branch.';
+    return;
+  }
+  if(!confirm('Create a separate alternative from '+filename+'? The original draft remains unchanged.'))return;
+  storyBranchState.busy=true;
+  const result=await api('/api/writer/story/branches/create',{
+    ...storyBranchPayload(),filename,name
+  });
+  storyBranchState.busy=false;
+  q('storyBranchStatus').textContent=result.message||'Could not create alternative.';
+  q('storyBranchStatus').className='status '+(result.ok?'ok':'err');
+  if(result.ok){
+    q('storyBranchName').value='';
+    await storyBranchRefresh();
+    q('storyBranchSelect').value=result.branch_id;
+    await storyBranchLoad(true);
+  }
+}
+async function storyBranchLoad(skipPrompt=false){
+  storyBranchClearAcceptance();
+  if(!skipPrompt&&storyBranchWouldReplaceUnsaved())return;
+  const branch_id=q('storyBranchSelect').value;
+  if(!branch_id){
+    q('storyBranchStatus').textContent='Choose an alternative first.';
+    return;
+  }
+  const result=await api('/api/writer/story/branches/read',{
+    ...storyBranchPayload(),branch_id
+  });
+  if(!result.ok){
+    q('storyBranchStatus').textContent=result.message||'Could not load alternative.';
+    return;
+  }
+  storyBranchState.id=branch_id;
+  storyBranchState.revision=result.revision;
+  storyBranchState.loadedText=result.content;
+  q('storyBranchText').value=result.content;
+  q('storyBranchStatus').textContent='Loaded branch: '+result.manifest.name+
+    ' · version '+result.manifest.versions.length+
+    '. This editor is separate from the main chapter draft.';
+  q('storyBranchStatus').className='status ok';
+}
+async function storyBranchSave(){
+  storyBranchClearAcceptance();
+  if(storyBranchState.busy)return;
+  if(!storyBranchState.id||storyBranchState.id!==q('storyBranchSelect').value||
+     !storyBranchState.revision){
+    q('storyBranchStatus').textContent='Load a branch before saving another version.';
+    return;
+  }
+  if(!confirm('Save a new version in this alternative branch? The canonical chapter draft will not change.'))return;
+  storyBranchState.busy=true;
+  const content=q('storyBranchText').value;
+  const result=await api('/api/writer/story/branches/append',{
+    ...storyBranchPayload(),
+    branch_id:storyBranchState.id,
+    content,expected_revision:storyBranchState.revision
+  });
+  storyBranchState.busy=false;
+  q('storyBranchStatus').textContent=result.message||'Alternative was not saved.';
+  q('storyBranchStatus').className='status '+(result.ok?'ok':'err');
+  if(result.ok){
+    storyBranchState.revision=result.revision;
+    storyBranchState.loadedText=content;
+    await storyBranchRefresh();
+    q('storyBranchSelect').value=storyBranchState.id;
+  }
+}
+async function storyBranchAcceptancePreview(){
+  storyBranchClearAcceptance();
+  const selected=q('storyBranchSelect').value;
+  if(!selected||storyBranchState.id!==selected||!storyBranchState.revision){
+    q('storyBranchAcceptStatus').textContent='Load the saved alternative first.';
+    return;
+  }
+  if(q('storyBranchText').value!==storyBranchState.loadedText){
+    q('storyBranchAcceptStatus').textContent='There are unsaved alternative edits. Save a new branch version first, or reload the saved version before accepting.';
+    return;
+  }
+  const project=q('storyDraftsProject').value;
+  const book=q('storyDraftsBook').value;
+  const result=await api('/api/writer/story/branches/preview_accept',{
+    project_id:project,book_id:book,branch_id:selected
+  });
+  if(!result.ok){
+    q('storyBranchAcceptStatus').textContent=result.message||'Acceptance preview unavailable.';
+    return;
+  }
+  storyBranchState.acceptPreview={
+    token:result.confirmation_token,branch_id:selected,project_id:project,
+    book_id:book,revision:storyBranchState.revision
+  };
+  q('storyBranchAccept').disabled=false;
+  q('storyBranchAcceptStatus').textContent=
+    'READ-ONLY ACCEPTANCE PREVIEW\n\nBranch: '+result.branch_name+
+    ' (v'+result.branch_version+')\nChapter: '+result.chapter+
+    '\nCurrent main version: '+result.current_version+
+    '\nWould append main version: '+result.expected_next_version+
+    '\nCurrent main words: '+result.main_words+
+    '\nAlternative words: '+result.alternative_words+
+    '\n\n'+result.diff_preview.join('\n')+
+    (result.truncated?'\n\n(Diff preview limited to 400 lines)':'')+
+    '\n\nNo content has been changed. Confirm separately to append a new canonical version.';
+}
+async function storyBranchAccept(){
+  const p=storyBranchState.acceptPreview;
+  if(!p||p.branch_id!==q('storyBranchSelect').value||
+      p.project_id!==q('storyDraftsProject').value||
+      p.book_id!==q('storyDraftsBook').value||
+      p.revision!==storyBranchState.revision){
+    storyBranchClearAcceptance();
+    q('storyBranchAcceptStatus').textContent='Preview this branch again before accepting.';
+    return;
+  }
+  if(q('storyBranchText').value!==storyBranchState.loadedText){
+    storyBranchClearAcceptance();
+    q('storyBranchAcceptStatus').textContent='Save or discard unsaved branch edits before accepting.';
+    return;
+  }
+  if(!confirm('ACCEPT THIS ALTERNATIVE AS A NEW CANONICAL CHAPTER DRAFT VERSION?\n\nEarlier versions will remain saved. The branch will remain available.'))return;
+  q('storyBranchAccept').disabled=true;
+  storyBranchState.acceptPreview=null;
+  const result=await api('/api/writer/story/branches/accept',{
+    project_id:p.project_id,book_id:p.book_id,branch_id:p.branch_id,
+    confirmation_token:p.token
+  });
+  q('storyBranchAcceptStatus').textContent=result.message||'Acceptance was rejected.';
+  q('storyBranchAcceptStatus').className='status '+(result.ok?'ok':'err');
+  if(result.ok){
+    toast('Alternative accepted as a NEW saved chapter draft version.','ok');
+    await storyDraftsRefresh();
+  }else{
+    toast('Not accepted. Refresh and preview again before retrying.','err');
+  }
+}
+async function storyBranchCompare(){
+  const branch_id=q('storyBranchSelect').value;
+  if(!branch_id){q('storyBranchCompare').textContent='Choose an alternative to compare.';return;}
+  const result=await api('/api/writer/story/branches/compare',{
+    ...storyBranchPayload(),branch_id
+  });
+  q('storyBranchCompare').textContent=result.ok
+    ?('Original: '+result.source_words+' words · Alternative: '+result.branch_words+
+      ' words. Different: '+result.different+
+      (result.truncated?' · Preview limited to 400 diff lines':'')+
+      '\n\n'+result.diff_preview.join('\n'))
+    :(result.message||'Comparison unavailable.');
 }
 async function storyDraftsCompare(){
   const d=await api('/api/writer/story/draft_compare',{project_id:q('storyDraftsProject').value,
@@ -940,6 +1839,7 @@ async function renderSettings(){
     q('cfgHealthKind').value=m.health_kind||'auto';
     q('cfgTimeout').value=m.timeout_seconds||420;
     q('cfgApiKey').placeholder=m.api_key_set?'API key is set (leave blank to keep)':'API key (optional)';
+    q('cfgApiKey').value='';
     q('cfgCraftUrl').value=(S.config.integrations&&S.config.integrations.craft_suite_url)||'';
     q('cfgServerInfo').innerHTML=`<div class="kv">
       <span class="k">LAN address</span><span>${esc(m.api_key_set?'':'')}${esc(S.config.server.host)}:${S.config.server.port}</span>
@@ -948,10 +1848,77 @@ async function renderSettings(){
       <span class="k">Approval phrase required</span><span>${S.config.writing&&S.config.writing.require_approval_phrase?'yes':'no'}</span>
     </div>`;
   }
+  await refreshModelProfiles();
   const vs=await api('/api/voice/pack/status');
   q('cfgVoicePack').innerHTML=vs&&vs.loaded
     ?`<span class="chip gold">Private Eric pack active — ${vs.source_count} source poem(s) available as read-only style references.</span>`
     :'<span class="chip">Private Eric pack not installed — the Eric — Poet/Narrator profile uses derived style settings only.</span>';
+}
+let modelProfileList=[];
+async function refreshModelProfiles(){
+  const selected=q('cfgProfileSelect').value;
+  const status=q('cfgProfileStatus');
+  const r=await api('/api/model/profiles');
+  const selector=q('cfgProfileSelect');
+  selector.innerHTML='';
+  selector.appendChild(new Option('Choose a saved preset…',''));
+  if(!r.ok){
+    modelProfileList=[];
+    status.textContent=r.message||'Could not load saved presets.';
+    status.className='status err';
+    return;
+  }
+  modelProfileList=r.profiles||[];
+  for(const p of modelProfileList)selector.appendChild(new Option(p.name,p.id));
+  if(modelProfileList.some(p=>p.id===selected))selector.value=selected;
+  status.textContent=modelProfileList.length+' local preset(s) saved. Presets never change the active model automatically.';
+  status.className='status';
+}
+function modelFormSettings(){
+  return {
+    base_url:q('cfgBaseUrl').value.trim(),
+    model:q('cfgModel').value.trim(),
+    chat_path:q('cfgChatPath').value.trim(),
+    health_path:q('cfgHealthPath').value.trim(),
+    health_kind:q('cfgHealthKind').value,
+    timeout_seconds:Number(q('cfgTimeout').value)
+  };
+}
+async function saveModelProfile(){
+  const name=q('cfgProfileName').value.trim();
+  if(!name){q('cfgProfileStatus').textContent='Name this preset before saving.';return;}
+  const r=await api('/api/model/profiles/save',{name,settings:modelFormSettings()});
+  q('cfgProfileStatus').textContent=r.message||'Preset save failed.';
+  q('cfgProfileStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok){
+    q('cfgProfileName').value='';
+    await refreshModelProfiles();
+    q('cfgProfileSelect').value=r.profile.id;
+  }
+}
+function stageModelProfile(){
+  const p=modelProfileList.find(x=>x.id===q('cfgProfileSelect').value);
+  if(!p){q('cfgProfileStatus').textContent='Choose a saved preset first.';return;}
+  const m=p.settings;
+  q('cfgBaseUrl').value=m.base_url;
+  q('cfgModel').value=m.model;
+  q('cfgChatPath').value=m.chat_path;
+  q('cfgHealthPath').value=m.health_path;
+  q('cfgHealthKind').value=m.health_kind;
+  q('cfgTimeout').value=m.timeout_seconds;
+  // Never replace or reconstruct a credential from a saved profile.
+  q('cfgApiKey').value='';
+  q('cfgProfileStatus').textContent='Preset staged in the form only. The active model is unchanged. Review endpoint and API key, then use the existing Save endpoint settings button if you want to apply it.';
+  q('cfgProfileStatus').className='status';
+}
+async function deleteModelProfile(){
+  const p=modelProfileList.find(x=>x.id===q('cfgProfileSelect').value);
+  if(!p){q('cfgProfileStatus').textContent='Select a preset to delete.';return;}
+  if(!confirm('Delete saved model preset "'+p.name+'"? Your active model will not change.'))return;
+  const r=await api('/api/model/profiles/delete',{profile_id:p.id});
+  q('cfgProfileStatus').textContent=r.message||'Could not delete preset.';
+  q('cfgProfileStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok)refreshModelProfiles();
 }
 async function saveModelConfig(){
   const payload={base_url:q('cfgBaseUrl').value,model:q('cfgModel').value,
@@ -970,9 +1937,94 @@ async function testModelConfig(){
   q('cfgTestStatus').className='status '+(d.ok?'ok':'err');
   renderHome();
 }
+async function inspectModelCapabilities(){
+  q('cfgCapabilitiesStatus').textContent='Reading advertised model metadata (no inference)…';
+  const d=await api('/api/model/capabilities');
+  q('cfgCapabilitiesStatus').textContent=JSON.stringify(d,null,2);
+  q('cfgCapabilitiesStatus').className='status '+(d.ok?'ok':'err');
+}
 
 /* ============================ optional finishing desk ============================ */
-function renderFinishing(){} // keep unsaved editing text when moving between rooms
+async function renderFinishing(){
+  // Preserve unsaved editor text and the author's current checkbox/selection.
+  const selector=q('finishCanonUniverse');
+  const selected=selector.value;
+  const result=await api('/api/novelforge/list');
+  const universes=result.ok?(result.universes||[]):[];
+  selector.innerHTML='<option value="">Select a saved universe…</option>'+
+    universes.map(u=>'<option value="'+esc(u.name)+'">'+esc(u.universe)+'</option>').join('');
+  if(universes.some(u=>u.name===selected))selector.value=selected;
+  else if(S.novel.active && universes.some(u=>u.name===S.novel.active))selector.value=S.novel.active;
+  await voiceDnaRefresh();
+  await councilLoadModels();
+  await bookPublishInit();
+  await revisionInit();
+}
+/* ========================= optional author-owned Voice DNA ========================= */
+async function voiceDnaRefresh(){
+  const select=q('finishVoiceDnaSelect');
+  const previouslySelected=select.value;
+  const result=await api('/api/writer/voice_dna');
+  select.replaceChildren();
+  select.appendChild(new Option('Choose author-owned style guide…',''));
+  if(!result.ok){
+    q('finishVoiceDnaStatus').textContent=result.message||'Voice DNA library unavailable.';
+    return;
+  }
+  for(const p of result.profiles||[])
+    select.appendChild(new Option(p.name+' · '+p.trait_count+' traits · '+p.sample_count+' excerpt(s)',p.id));
+  if((result.profiles||[]).some(p=>p.id===previouslySelected))select.value=previouslySelected;
+  q('finishVoiceDnaStatus').textContent=(result.profiles||[]).length+
+    ' private guide(s). Nothing is sent to a model unless you enable it for a review.';
+}
+function voiceDnaLines(id){
+  return q(id).value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+}
+async function voiceDnaCreate(){
+  const name=q('dnaName').value.trim();
+  if(!name){q('finishVoiceDnaStatus').textContent='Name the profile first.';return;}
+  const sample=q('dnaSample').value.trim();
+  if(sample&&!confirm('Store this excerpt inside the private Voice DNA library on this installation? You can use a style guide without saving any sample text.'))return;
+  const profile={
+    name,author:q('dnaAuthor').value.trim(),
+    traits:voiceDnaLines('dnaTraits'),
+    preserve:voiceDnaLines('dnaPreserve'),
+    avoid:voiceDnaLines('dnaAvoid'),
+    samples:sample?[sample]:[]
+  };
+  const r=await api('/api/writer/voice_dna/create',{profile});
+  q('finishVoiceDnaStatus').textContent=r.message||'Could not save style guide.';
+  q('finishVoiceDnaStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok){
+    await voiceDnaRefresh();
+    q('finishVoiceDnaSelect').value=r.profile_id;
+    q('dnaName').value='';
+    q('dnaTraits').value='';
+    q('dnaPreserve').value='';
+    q('dnaAvoid').value='';
+    q('dnaSample').value='';
+  }
+}
+async function voiceDnaInspect(){
+  const id=q('finishVoiceDnaSelect').value;
+  if(!id){q('finishVoiceDnaPreview').value='Choose a saved guide.';return;}
+  const r=await api('/api/writer/voice_dna/read?id='+encodeURIComponent(id));
+  q('finishVoiceDnaPreview').value=r.ok?JSON.stringify(r.profile,null,2):
+    (r.message||'Could not inspect guide.');
+}
+async function voiceDnaDelete(){
+  const id=q('finishVoiceDnaSelect').value;
+  if(!id){q('finishVoiceDnaStatus').textContent='Choose a guide first.';return;}
+  if(!confirm('Remove this Voice DNA guide from the active library? A local backup is kept.'))return;
+  const r=await api('/api/writer/voice_dna/delete',{id});
+  q('finishVoiceDnaStatus').textContent=r.message||'Delete failed.';
+  q('finishVoiceDnaStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok){
+    q('finishVoiceDnaPreview').value='';
+    q('finishUseVoiceDna').checked=false;
+    await voiceDnaRefresh();
+  }
+}
 function finishingImport(source){
   const ids={
     'studio':'poemResult', 'polisher':'poemPolisherInput', 'polished':'poemPolishedResult',
@@ -991,18 +2043,1076 @@ function finishingImport(source){
   if(source==='weaver')q('finishTitle').value=q('weaverTitle').value||'';
   toast('Copied from the work area. Your original draft was not changed.','ok');
 }
+let editorialGeneration=null;
+let editorialBusy=false;
+function editorialPayload(){
+  const payload={text:q('finishText').value,mode:q('finishMode').value,
+    title:q('finishTitle').value,writing_type:q('finishType').value,
+    direction:q('finishDirection').value};
+  if(q('finishUseCanon').checked){
+    payload.use_canon=true;
+    payload.universe=q('finishCanonUniverse').value;
+    payload.canon_limit=Number(q('finishCanonLimit').value);
+  }
+  if(q('finishUseVoiceDna').checked){
+    payload.use_voice_dna=true;
+    payload.voice_dna_id=q('finishVoiceDnaSelect').value;
+  }
+  return payload;
+}
 async function finishingReview(){
-  const text=q('finishText').value;
-  if(!text.trim()){toast('Paste or import a passage first.','err');return;}
-  q('finishStatus').textContent='Asking your configured writing model…';
-  const d=await api('/api/writer/editorial/review',{
-    text, mode:q('finishMode').value, title:q('finishTitle').value,
-    writing_type:q('finishType').value,direction:q('finishDirection').value
+  if(editorialBusy)return;
+  const payload=editorialPayload();
+  if(!payload.text.trim()){toast('Paste or import a passage first.','err');return;}
+  editorialBusy=true;editorialGeneration=null;
+  q('finishStop').disabled=true;
+  q('finishResult').value='';
+  q('finishStatus').textContent='Connecting to the configured model stream…';
+  q('finishStatus').className='status';
+  let terminal=false;
+  try{
+    const response=await fetch('/api/writer/editorial/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!response.ok){
+      let err;try{err=await response.json();}catch(e){}
+      throw new Error(err&&err.message||'HTTP '+response.status);
+    }
+    if(!response.body)throw new Error('This browser does not support streamed responses.');
+    const reader=response.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer='';
+    function handleFrame(frame){
+      let event='';
+      const data=[];
+      for(const line of frame.split(/\r?\n/)){
+        if(line.startsWith('event:'))event=line.slice(6).trim();
+        if(line.startsWith('data:'))data.push(line.slice(5).replace(/^ /,''));
+      }
+      if(!event||!data.length)return;
+      let item;
+      try{item=JSON.parse(data.join('\n'));}catch(e){throw new Error('Invalid stream event from server.');}
+      if(event==='start'){
+        editorialGeneration=item.generation_id;
+        q('finishStop').disabled=false;
+        q('finishStatus').textContent='Generating live review…';
+      }else if(event==='token'){
+        q('finishResult').value+=item.text||'';
+        q('finishResult').scrollTop=q('finishResult').scrollHeight;
+      }else if(event==='done'){
+        terminal=true;
+        q('finishStatus').textContent='Review complete. Original text unchanged.';
+        q('finishStatus').className='status ok';
+      }else if(event==='cancelled'){
+        terminal=true;
+        q('finishStatus').textContent='Stopped. Partial response is unsaved; original text unchanged.';
+        q('finishStatus').className='status';
+      }else if(event==='error'){
+        terminal=true;
+        q('finishStatus').textContent=item.message||'Streaming failed.';
+        q('finishStatus').className='status err';
+      }
+    }
+    while(true){
+      const next=await reader.read();
+      if(next.done)break;
+      buffer+=decoder.decode(next.value,{stream:true});
+      let match;
+      while((match=buffer.match(/\r?\n\r?\n/))){
+        const frame=buffer.slice(0,match.index);
+        buffer=buffer.slice(match.index+match[0].length);
+        handleFrame(frame);
+      }
+    }
+    if(!terminal)throw new Error('Stream closed before completion; partial text is unsaved.');
+  }catch(e){
+    q('finishStatus').textContent=(e&&e.message||String(e))+' Try Classic review if streaming is unsupported.';
+    q('finishStatus').className='status err';
+  }finally{
+    editorialBusy=false;editorialGeneration=null;q('finishStop').disabled=true;
+  }
+}
+async function finishingCancel(){
+  if(!editorialGeneration)return;
+  q('finishStop').disabled=true;
+  q('finishStatus').textContent='Stopping model generation…';
+  const result=await api('/api/generation/'+encodeURIComponent(editorialGeneration)+'/cancel',{});
+  if(!result.ok)q('finishStatus').textContent=result.message||'Could not stop generation.';
+}
+async function finishingReviewClassic(){
+  if(editorialBusy)return;
+  const payload=editorialPayload();
+  if(!payload.text.trim()){toast('Paste or import a passage first.','err');return;}
+  editorialBusy=true;
+  q('finishStatus').textContent='Asking configured model (classic response)…';
+  try{
+    const d=await api('/api/writer/editorial/review',payload);
+    q('finishStatus').textContent=d.message||'No result.';
+    q('finishStatus').className='status '+(d.ok?'ok':'err');
+    if(d.ok){q('finishResult').value=d.text||'';
+      q('finishStatus').textContent+=' Original text remains untouched.';}
+  }finally{editorialBusy=false;}
+}
+/* ==================== author-controlled Editorial Council (v2) ==================== */
+/* Author-selected Council models reuse inert Saved Model Profiles in Settings.
+   Other endpoints never inherit the current model endpoint's API key. */
+async function councilLoadModels(){
+  const ids=[
+    'councilModelStory','councilModelContinuity','councilModelVoice',
+    'councilModelLine','councilModelSynthesis'
+  ];
+  const [catalog, profiles]=await Promise.all([
+    api('/api/writer/council/roles'),api('/api/model/profiles')
+  ]);
+  if(!catalog.ok||!profiles.ok){
+    q('councilModelStatus').textContent=
+      (catalog.message||profiles.message||'Unable to read saved model profiles.')+
+      ' Current model stays the default; no requests have been sent to a model.';
+    return;
+  }
+  const options=profiles.profiles||[];
+  for(const id of ids){
+    const field=q(id),old=field.value;
+    field.replaceChildren();
+    field.appendChild(new Option('Active model: '+catalog.model,''));
+    for(const p of options){
+      field.appendChild(new Option(
+        p.name+' — '+p.settings.model+' @ '+p.settings.base_url+
+        ' ('+p.settings.timeout_seconds+'s saved timeout)',p.id
+      ));
+    }
+    if(options.some(p=>p.id===old))field.value=old;
+  }
+  q('councilModelStatus').textContent=
+    'Available saved profiles: '+options.length+
+    '. Profiles are selected per role; selecting one never changes active Settings. '+
+    'An active API key will not be forwarded to a different endpoint. '+
+    'A different endpoint requiring credentials may reject the request.';
+}
+function councilSelectedProfileIds(){
+  const fields={
+    story_architect:'councilModelStory',
+    continuity_editor:'councilModelContinuity',
+    voice_guardian:'councilModelVoice',
+    line_editor:'councilModelLine'
+  };
+  const choices={};
+  for(const role of councilSelectedRoles()){
+    const id=q(fields[role]).value;
+    if(id)choices[role]=id;
+  }
+  return choices;
+}
+const councilDecisions={items:[],sourceFingerprint:'',baseline:''};
+function councilDecisionStatus(message,kind=''){
+  const node=q('councilDecisionStatus');
+  node.textContent=message;
+  node.className='status '+kind;
+}
+function councilDecisionCapture(role,field){
+  const start=field.selectionStart,end=field.selectionEnd;
+  const chosen=field.value.slice(start,end).trim();
+  if(!chosen){
+    councilDecisionStatus('Select a specific recommendation in the reviewer report first.','err');
+    return;
+  }
+  councilAddDecision(role,chosen);
+}
+function councilAddDecision(role,quote){
+  if(!councilState.baseline||!councilState.sourceFingerprint){
+    councilDecisionStatus('Complete a Council review first, then collect suggestions.','err');
+    return;
+  }
+  if(!quote||quote.length>1500||councilDecisions.items.length>=100){
+    councilDecisionStatus('Select 1–1,500 characters; the board accepts up to 100 decisions.','err');
+    return;
+  }
+  if(!councilDecisions.items.length){
+    councilDecisions.sourceFingerprint=councilState.sourceFingerprint||'';
+    councilDecisions.baseline=councilState.baseline||'';
+  }
+  if(councilDecisions.baseline!==councilState.baseline){
+    councilDecisionStatus('This board belongs to an earlier Council run. Export it before starting a new board.','err');
+    return;
+  }
+  councilDecisions.items.push({
+    id:'d'+Date.now().toString(36)+Math.random().toString(36).slice(2,9),
+    role,quote,status:'pending',note:''
   });
-  q('finishStatus').textContent=d.message||'No result.';
-  q('finishStatus').className='status '+(d.ok?'ok':'err');
-  if(d.ok){q('finishResult').value=d.text||'';
-    q('finishStatus').textContent+=' Original text remains untouched.';}
+  councilDecisionRender();
+  councilDecisionStatus('Added a recommendation for your individual review. Nothing was applied.','ok');
+}
+function councilDecisionManual(){
+  const quote=q('councilDecisionText').value.trim();
+  if(!quote){councilDecisionStatus('Type a specific recommendation first.','err');return;}
+  councilAddDecision('author_note',quote);
+  if(councilDecisions.items.some(x=>x.quote===quote))q('councilDecisionText').value='';
+}
+function councilDecisionRender(){
+  const target=q('councilDecisionBoard');
+  target.replaceChildren();
+  if(!councilDecisions.items.length){
+    const msg=document.createElement('p');
+    msg.className='small';
+    msg.textContent='No decisions yet. Select an excerpt from a reviewer report or add your own note.';
+    target.appendChild(msg);
+    return;
+  }
+  const stale=councilDecisions.baseline!==councilKey();
+  const note=document.createElement('p');
+  note.className='small';
+  note.textContent=stale?'The passage or model selection has changed since these decisions were collected. Treat these as historical notes; no manuscript changes have been made.':
+    'These choices are advisory notes only. Approve does not alter any draft.';
+  target.appendChild(note);
+  for(const item of councilDecisions.items){
+    const card=document.createElement('div');card.className='card';
+    const heading=document.createElement('strong');
+    heading.textContent=item.role.replace(/_/g,' ')+' · '+item.status;
+    const quote=document.createElement('p');
+    quote.textContent=item.quote;
+    const row=document.createElement('div');row.className='row';
+    const select=document.createElement('select');
+    select.setAttribute('aria-label','Decision for '+item.role);
+    for(const [value,label] of [
+      ['pending','Pending'],['approved','Approved for consideration'],
+      ['rejected','Rejected'],['deferred','Defer']
+    ])select.appendChild(new Option(label,value));
+    select.value=item.status;
+    select.addEventListener('change',()=>{
+      item.status=select.value;
+      heading.textContent=item.role.replace(/_/g,' ')+' · '+item.status;
+      councilDecisionStatus('Decision updated locally. Nothing has been applied.','ok');
+    });
+    const remove=document.createElement('button');
+    remove.type='button';remove.className='btn';
+    remove.textContent='Remove';
+    remove.addEventListener('click',()=>{
+      councilDecisions.items=councilDecisions.items.filter(x=>x.id!==item.id);
+      councilDecisionRender();
+    });
+    row.appendChild(select);row.appendChild(remove);
+    const comment=document.createElement('textarea');
+    comment.setAttribute('aria-label','Author note');
+    comment.maxLength=2000;
+    comment.placeholder='Why accept, reject or defer? (optional; never sent to a model)';
+    comment.value=item.note;
+    comment.addEventListener('input',()=>{item.note=comment.value;});
+    card.appendChild(heading);card.appendChild(quote);
+    card.appendChild(row);card.appendChild(comment);
+    target.appendChild(card);
+  }
+}
+function councilDecisionExport(){
+  if(!councilDecisions.items.length){
+    councilDecisionStatus('Add at least one author decision before exporting.','err');
+    return;
+  }
+  const exportData={
+    schema:'kayock.writer.council_decisions.v1',
+    source_fingerprint:councilDecisions.sourceFingerprint,
+    source_changed:councilKey()!==councilDecisions.baseline,
+    choices:councilDecisions.items.map(x=>({
+      role:x.role,quote:x.quote,status:x.status,note:x.note
+    })),
+    source_text_included:false,
+    manuscript_applied:false
+  };
+  const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='kayock-council-decisions.json';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  councilDecisionStatus('Decision notes downloaded as JSON. No server or manuscript files were changed.','ok');
+}
+const councilState={
+  busy:false,generation:null,phase:'',baseline:null,roles:[],
+  sourceFingerprint:null,reports:[],reviewComplete:false
+};
+function councilSelectedRoles(){
+  return [
+    ['councilStory','story_architect'],
+    ['councilContinuity','continuity_editor'],
+    ['councilVoice','voice_guardian'],
+    ['councilLine','line_editor']
+  ].filter(([id])=>q(id).checked).map(([,role])=>role);
+}
+function councilKey(){
+  const p=editorialPayload();
+  delete p.mode;
+  return JSON.stringify({...p,roles:councilSelectedRoles(),
+    role_profiles:councilSelectedProfileIds(),
+    synthesis_profile_id:q('councilModelSynthesis').value});
+}
+function councilReviewPayload(){
+  const p=editorialPayload();
+  delete p.mode;
+  return {...p,stage:'reviews',roles:councilSelectedRoles(),
+    role_profiles:councilSelectedProfileIds(),
+    synthesis_profile_id:q('councilModelSynthesis').value};
+}
+function councilSetStatus(message,kind=''){
+  const element=q('councilStatus');
+  element.textContent=message;
+  element.className='status '+kind;
+}
+function councilRenderReports(){
+  const target=q('councilReports');
+  target.replaceChildren();
+  if(!councilState.reports.length){
+    const note=document.createElement('p');
+    note.className='small';
+    note.textContent='Reviewer feedback appears here, separately from your draft.';
+    target.appendChild(note);
+    return;
+  }
+  for(const report of councilState.reports){
+    const card=document.createElement('div');
+    card.className='card';
+    const title=document.createElement('h4');
+    const labels={
+      story_architect:'Story Architect',continuity_editor:'Continuity Editor',
+      voice_guardian:'Voice Guardian',line_editor:'Line Editor'
+    };
+    title.textContent=(labels[report.role]||report.role)+
+      (report.model?' · '+report.model:'');
+    const field=document.createElement('textarea');
+    field.className='big';
+    field.readOnly=true;
+    field.value=report.text;
+    const add=document.createElement('button');
+    add.type='button';add.className='btn';
+    add.textContent='Add selected recommendation to decision board';
+    add.addEventListener('click',()=>councilDecisionCapture(report.role,field));
+    card.appendChild(title);
+    card.appendChild(field);
+    card.appendChild(add);
+    target.appendChild(card);
+  }
+}
+function councilStateButtons(){
+  q('councilRunButton').disabled=councilState.busy;
+  q('councilStopButton').disabled=!councilState.busy||!councilState.generation;
+  q('councilSynthesizeButton').disabled=councilState.busy||
+    !councilState.reviewComplete||
+    councilState.reports.length!==councilState.roles.length;
+}
+async function councilRun(){
+  if(councilState.busy)return;
+  const payload=councilReviewPayload();
+  if(!payload.text.trim()){
+    councilSetStatus('Paste or import a passage into the Finishing Desk first.','err');
+    return;
+  }
+  if(payload.roles.length<1||payload.roles.length>3){
+    councilSetStatus('Choose 1–3 distinct editorial roles.','err');
+    return;
+  }
+  const oneCallEach=payload.roles.length;
+  if(councilDecisions.items.length&&!confirm(
+      'Starting a new Council run will clear the current unsaved decision board. Export it first if you want to keep your decisions. Continue?'))return;
+  if(!confirm('Run '+oneCallEach+' sequential model call(s) using your selected saved model profiles (or the active model by default)? Each reviewer sees the original passage and explicitly enabled references. No revisions are applied.'))return;
+  councilDecisions.items=[];
+  councilDecisions.sourceFingerprint='';
+  councilDecisions.baseline='';
+  councilDecisionRender();
+  councilState.baseline=councilKey();
+  councilState.roles=payload.roles.slice();
+  councilState.reports=[];
+  councilState.sourceFingerprint=null;
+  councilState.reviewComplete=false;
+  q('councilSummary').value='';
+  councilRenderReports();
+  await councilStream(payload,'reviews');
+}
+async function councilSynthesize(){
+  if(councilState.busy||!councilState.reviewComplete||
+      councilState.reports.length!==councilState.roles.length){
+    councilSetStatus('Finish the selected reviewer reports before requesting synthesis.','err');
+    return;
+  }
+  if(councilKey()!==councilState.baseline){
+    councilState.reviewComplete=false;
+    councilStateButtons();
+    councilSetStatus('The passage, roles or references changed. Run fresh reviews before synthesizing.','err');
+    return;
+  }
+  if(!confirm('Ask the selected synthesis model for ONE additional call using the complete reviewer reports and original passage? No report is compacted or applied.'))return;
+  const payload={
+    ...councilReviewPayload(),stage:'synthesis',
+    reports:councilState.reports.map(item=>({role:item.role,text:item.text})),
+    source_fingerprint:councilState.sourceFingerprint
+  };
+  q('councilSummary').value='';
+  await councilStream(payload,'synthesis');
+}
+async function councilStop(){
+  if(!councilState.generation)return;
+  q('councilStopButton').disabled=true;
+  councilSetStatus('Stopping the current Council model call…');
+  const result=await api('/api/generation/'+
+    encodeURIComponent(councilState.generation)+'/cancel',{});
+  if(!result.ok)councilSetStatus(result.message||'Could not stop Council call.','err');
+}
+async function councilStream(payload,stage){
+  councilState.busy=true;
+  councilState.phase=stage;
+  councilState.generation=null;
+  councilStateButtons();
+  const live=q('councilLive');
+  live.value='';
+  councilSetStatus(stage==='reviews'?
+    'Connecting to the configured model. Selected roles run in sequence…':
+    'Building optional synthesis from full Council reports…');
+  let terminal=false;
+  try{
+    const response=await fetch('/api/writer/council/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!response.ok){
+      let detail;try{detail=await response.json();}catch(e){}
+      throw new Error(detail&&detail.message||'Council HTTP '+response.status);
+    }
+    if(!response.body)throw new Error('The browser cannot read the Council event stream.');
+    const reader=response.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer='';
+    const handleFrame=(frame)=>{
+      let name='';
+      const data=[];
+      for(const line of frame.split(/\r?\n/)){
+        if(line.startsWith('event:'))name=line.slice(6).trim();
+        if(line.startsWith('data:'))data.push(line.slice(5).replace(/^ /,''));
+      }
+      if(!name||!data.length)return;
+      let item;try{item=JSON.parse(data.join('\n'));}catch(e){
+        throw new Error('Invalid Council event payload.');
+      }
+      if(name==='start'){
+        councilState.generation=item.generation_id;
+        councilState.sourceFingerprint=item.source_fingerprint;
+        councilStateButtons();
+        councilSetStatus(stage==='reviews'?
+          'Reviewing with '+payload.roles.length+' selected role(s)…':
+          'Generating author-requested synthesis…');
+      }else if(name==='role_start'){
+        live.value='['+(item.label||item.role)+
+          (item.model?' · '+item.model:'')+']\n';
+        councilSetStatus('Working: '+(item.label||item.role)+
+          (item.model?' on '+item.model:'')+
+          '. No other reviewer is running concurrently.');
+      }else if(name==='role_token'){
+        live.value+=item.text||'';
+        live.scrollTop=live.scrollHeight;
+      }else if(name==='role_done'){
+        if(stage==='reviews'){
+          councilState.reports.push({role:item.role,text:item.text,
+            model:item.model||''});
+          councilRenderReports();
+          councilSetStatus(councilState.reports.length+' of '+
+            councilState.roles.length+' reviewer(s) completed. Read-only reports.');
+        }else if(item.role==='synthesis'){
+          q('councilSummary').value=item.text;
+        }
+      }else if(name==='done'){
+        terminal=true;
+        if(stage==='reviews'){
+          councilState.reviewComplete=
+            councilState.reports.length===councilState.roles.length;
+        }
+        councilSetStatus(stage==='reviews'?
+          'Council reviews complete. Read each report; synthesis is optional and requires another click.':
+          'Synthesis complete. Feedback remains separate; no manuscript changes applied.','ok');
+      }else if(name==='cancelled'){
+        terminal=true;
+        if(stage==='reviews')councilState.reviewComplete=false;
+        councilSetStatus('Council stopped. Completed reports remain visible; partial work is unsaved.');
+      }else if(name==='error'){
+        terminal=true;
+        if(stage==='reviews')councilState.reviewComplete=false;
+        councilSetStatus(item.message||'Council model stream failed.','err');
+      }
+    };
+    while(true){
+      const item=await reader.read();
+      if(item.done)break;
+      buffer+=decoder.decode(item.value,{stream:true});
+      let match;
+      while((match=buffer.match(/\r?\n\r?\n/))){
+        const frame=buffer.slice(0,match.index);
+        buffer=buffer.slice(match.index+match[0].length);
+        handleFrame(frame);
+      }
+    }
+    if(!terminal)throw new Error('Council stream ended early. Partial text was not saved.');
+  }catch(error){
+    if(stage==='reviews')councilState.reviewComplete=false;
+    councilSetStatus(String(error.message||error),'err');
+  }finally{
+    councilState.busy=false;
+    councilState.generation=null;
+    councilStateButtons();
+  }
+}
+/* ===================== author-controlled revision approval ===================== */
+const revisionState={
+  initialized:false,project:'',book:'',chapter:'',sourceHash:'',
+  original:'',token:null,previewRequest:null
+};
+function revisionInvalidate(){
+  revisionState.token=null;
+  revisionState.previewRequest=null;
+  q('revisionApproval').checked=false;
+  q('revisionApproveButton').disabled=true;
+  q('revisionDiff').textContent=
+    'Proposed text or chapter selection changed. Preview the exact revision again.';
+  q('revisionDiff').className='status';
+}
+function revisionStatus(message,kind=''){
+  const element=q('revisionStatus');
+  element.textContent=message;
+  element.className='status '+kind;
+}
+async function revisionInit(){
+  if(revisionState.initialized)return;
+  revisionState.initialized=true;
+  const select=q('revisionProject');
+  const old=select.value||S.story.project||'';
+  select.replaceChildren();
+  for(const p of S.projects||[])
+    select.appendChild(new Option(p.title||p.project_id,p.project_id));
+  if((S.projects||[]).some(p=>p.project_id===old))select.value=old;
+  await revisionSelectProject();
+}
+async function revisionSelectProject(){
+  if(revisionState.chapter &&
+      q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Discard the unsaved proposed revision to switch projects?')){
+    q('revisionProject').value=revisionState.project;
+    return;
+  }
+  const project=q('revisionProject').value;
+  const old=q('revisionBook').value||S.story.book||'';
+  const select=q('revisionBook');
+  const found=(S.projects||[]).find(p=>p.project_id===project);
+  select.replaceChildren();
+  for(const item of (found&&found.books)||[])
+    select.appendChild(new Option(item.title||item.id,item.id));
+  if((found&&found.books||[]).some(b=>b.id===old))select.value=old;
+  await revisionOptions(true);
+}
+async function revisionOptions(skipDiscardPrompt=false){
+  if(!skipDiscardPrompt && revisionState.chapter &&
+      q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Discard the unsaved proposed revision to switch books or refresh chapters?')){
+    q('revisionBook').value=revisionState.book;
+    return;
+  }
+  const project=q('revisionProject').value;
+  const book=q('revisionBook').value;
+  revisionInvalidate();
+  revisionState.project='';
+  revisionState.book='';
+  revisionState.chapter='';
+  revisionState.original='';
+  q('revisionOriginal').value='';
+  q('revisionCandidate').value='';
+  const selector=q('revisionChapter');
+  selector.replaceChildren();
+  if(!project||!book){
+    revisionStatus('Choose a saved Story Forge project and book.');
+    return;
+  }
+  const response=await api('/api/writer/revision/options?project_id='+
+    encodeURIComponent(project)+'&book_id='+encodeURIComponent(book));
+  if(project!==q('revisionProject').value||book!==q('revisionBook').value)return;
+  if(!response.ok){
+    revisionStatus(response.message||'Could not list saved chapter versions.','err');
+    return;
+  }
+  const groups=response.chapters||[];
+  for(const group of groups){
+    selector.appendChild(new Option(
+      group.chapter+' · v'+group.version+' · '+group.word_count+' words',
+      group.chapter
+    ));
+  }
+  revisionStatus(groups.length?
+    'Choose a chapter, then load its latest verified saved version. No writing has been changed.':
+    'No saved draft chapters in this book.');
+}
+async function revisionLoad(){
+  const project=q('revisionProject').value;
+  const book=q('revisionBook').value;
+  const chapter=q('revisionChapter').value;
+  if(!project||!book||!chapter){
+    revisionStatus('Choose a saved chapter first.','err');return;
+  }
+  if(revisionState.project&&q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Discard your unsaved candidate text and load a saved chapter?'))return;
+  revisionInvalidate();
+  const originalCandidateBeforeRequest=q('revisionCandidate').value;
+  const r=await api('/api/writer/revision/load',{
+    project_id:project,book_id:book,chapter
+  });
+  if(!r.ok){revisionStatus(r.message||'Could not load saved chapter.','err');return;}
+  if(project!==q('revisionProject').value||book!==q('revisionBook').value||
+     chapter!==q('revisionChapter').value||
+     q('revisionCandidate').value!==originalCandidateBeforeRequest){
+    revisionStatus('The chapter selection or unsaved proposal changed during load. '+
+      'Your current text was preserved; load again when ready.','err');
+    return;
+  }
+  revisionState.project=project;revisionState.book=book;
+  revisionState.chapter=chapter;revisionState.original=r.text;
+  revisionState.sourceHash=r.sha256;
+  q('revisionOriginal').value=r.text;
+  q('revisionCandidate').value=r.text;
+  revisionStatus('Verified '+chapter+' · saved version '+r.version+
+    '. Edit the separate proposed revision, then preview before saving.','ok');
+}
+function revisionUseFinishingText(){
+  if(!revisionState.chapter){
+    revisionStatus('Load a verified saved chapter first.','err');return;
+  }
+  const incoming=q('finishText').value;
+  if(!incoming.trim()){
+    revisionStatus('There is no Finishing Desk passage to copy.','err');return;
+  }
+  if(q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Replace the unsaved proposed text with the Finishing Desk passage?'))return;
+  q('revisionCandidate').value=incoming;
+  revisionInvalidate();
+  revisionStatus('Finishing Desk text copied into the proposed revision. Nothing saved.');
+}
+function revisionRequest(){
+  return {
+    project_id:revisionState.project,
+    book_id:revisionState.book,
+    chapter:revisionState.chapter,
+    candidate:q('revisionCandidate').value
+  };
+}
+function revisionChoicesCurrent(){
+  return revisionState.project===q('revisionProject').value &&
+    revisionState.book===q('revisionBook').value &&
+    revisionState.chapter===q('revisionChapter').value;
+}
+async function revisionPreview(){
+  revisionInvalidate();
+  if(!revisionState.chapter||!revisionChoicesCurrent()){
+    revisionStatus('Load the selected chapter before previewing.','err');return;
+  }
+  const payload=revisionRequest();
+  revisionStatus('Comparing the entire candidate with the saved chapter…');
+  const r=await api('/api/writer/revision/preview',payload);
+  if(!r.ok){revisionStatus(r.message||'Revision preview failed.','err');return;}
+  if(JSON.stringify(payload)!==JSON.stringify(revisionRequest())||
+     !revisionChoicesCurrent()){
+    revisionStatus('The candidate changed during preview. Preview again.','err');
+    return;
+  }
+  revisionState.token=r.confirmation_token;
+  revisionState.previewRequest=JSON.stringify(payload);
+  q('revisionDiff').textContent=
+    'CURRENT: v'+r.current_version+' · NEXT: v'+r.expected_next_version+
+    '\nOriginal words: '+r.source_words+' · Proposed words: '+r.candidate_words+
+    '\nChanged blocks: '+r.diff_metrics.changed_blocks+
+    (r.diff_preview_truncated?
+      '\nDIFF DISPLAY LIMITED TO 400 LINES. Full candidate remains intact.':'')+
+    '\n\n'+r.diff_lines.join('\n');
+  q('revisionDiff').className='status ok';
+  revisionStatus('Read the diff. Saving is disabled until you explicitly approve.','ok');
+}
+function revisionApprovalChanged(){
+  q('revisionApproveButton').disabled=!q('revisionApproval').checked||
+    !revisionState.token||revisionState.previewRequest!==
+    JSON.stringify(revisionRequest())||!revisionChoicesCurrent();
+}
+async function revisionAccept(){
+  if(!q('revisionApproval').checked||!revisionState.token||
+     !revisionChoicesCurrent()||revisionState.previewRequest!==
+      JSON.stringify(revisionRequest())){
+    revisionInvalidate();
+    revisionStatus('The revision changed or is not approved. Preview again.','err');
+    return;
+  }
+  const payload=revisionRequest();
+  if(!confirm('SAVE this exact author-approved revision as a NEW Story Forge draft version of "'+
+      payload.chapter+'"? Earlier versions will remain. No automatic merge occurs.'))return;
+  const result=await api('/api/writer/revision/accept',{
+    ...payload,confirmation_token:revisionState.token,approved:true
+  });
+  if(!result.ok){
+    revisionInvalidate();
+    revisionStatus(result.message||'Revision acceptance failed. Preview again.','err');
+    return;
+  }
+  const changedDuringSave=(
+    !revisionChoicesCurrent() ||
+    JSON.stringify(revisionRequest())!==JSON.stringify(payload)
+  );
+  revisionInvalidate();
+  if(changedDuringSave){
+    revisionStatus('A NEW canonical draft v'+result.canonical_version+
+      ' was saved from your confirmed preview. Your current unsaved '+
+      'proposal or selection changed while saving and was NOT replaced. '+
+      'Reload the saved chapter when ready.','ok');
+    return;
+  }
+  // Keep the visible chapter selector synchronized with the version that
+  // the server actually committed. Do not refresh the whole workspace:
+  // that could discard a separate unsaved candidate in another field.
+  const selectedOption=Array.from(q('revisionChapter').options)
+    .find(option=>option.value===payload.chapter);
+  if(selectedOption){
+    selectedOption.textContent=payload.chapter+' · v'+result.canonical_version+
+      ' · '+result.canonical_word_count+' words';
+  }
+  revisionStatus('Saved new canonical draft v'+result.canonical_version+
+    ' for '+result.chapter+'. Earlier saved versions remain unchanged.','ok');
+  revisionState.original=payload.candidate;
+  q('revisionOriginal').value=payload.candidate;
+  q('revisionCandidate').value=payload.candidate;
+  q('revisionDiff').textContent='Accepted as NEW version '+result.canonical_version+
+    '. Preview a different candidate for further changes.';
+}
+/* ===================== full-book assembly and downloads ===================== */
+const bookPublishState={
+  sourceKey:'',entries:[],snapshot:null,
+  coverBase64:'',coverName:'',fontBase64:'',fontName:''
+};
+async function bookPublishCoverChange(){
+  const input=q('bookPublishCover');
+  const file=input.files&&input.files[0];
+  bookPublishState.coverBase64='';
+  bookPublishState.coverName='';
+  bookPublishInvalidate();
+  if(!file){q('bookPublishCoverStatus').textContent='No cover selected.';return;}
+  if(file.size>2*1024*1024||file.size<100 ||
+      !/\.jpe?g$/i.test(file.name) ||
+      (file.type&&file.type!=='image/jpeg')){
+    q('bookPublishCoverStatus').textContent='Choose an RGB JPEG (.jpg or .jpeg) up to 2 MB.';
+    input.value='';
+    return;
+  }
+  try{
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    // Work in bounded chunks to avoid large apply(...) argument lists.
+    let raw='';
+    for(let i=0;i<bytes.length;i+=16384)
+      raw+=String.fromCharCode(...bytes.subarray(i,i+16384));
+    bookPublishState.coverBase64=btoa(raw);
+    bookPublishState.coverName=file.name;
+    q('bookPublishCoverStatus').textContent='Selected '+file.name+
+      ' ('+Math.round(file.size/1024)+' KB). Preview will validate image dimensions and strip common private metadata. File is not saved to Writer.';
+  }catch(error){
+    q('bookPublishCoverStatus').textContent='Unable to read selected JPEG: '+String(error);
+    input.value='';
+  }
+}
+async function bookPublishFontChange(){
+  const input=q('bookPublishFont');
+  const file=input.files&&input.files[0];
+  bookPublishState.fontBase64='';
+  bookPublishState.fontName='';
+  bookPublishInvalidate();
+  if(!file){
+    q('bookPublishFontStatus').textContent='Default PDF fonts (Western characters only).';
+    return;
+  }
+  if(file.size>3*1024*1024||file.size<512||!/\.ttf$/i.test(file.name)){
+    input.value='';
+    q('bookPublishFontStatus').textContent='Choose a licensed .ttf file from 512 bytes to 3 MB (not OTF/TTC).';
+    return;
+  }
+  try{
+    const data=new Uint8Array(await file.arrayBuffer());
+    let raw='';
+    for(let i=0;i<data.length;i+=16384)
+      raw+=String.fromCharCode(...data.subarray(i,i+16384));
+    bookPublishState.fontBase64=btoa(raw);
+    bookPublishState.fontName=file.name;
+    q('bookPublishFontStatus').textContent='Selected font '+file.name+' ('+
+      Math.round(file.size/1024)+' KB). It is embedded in the downloaded PDF only, not stored on the server. Ensure you have permission to embed it.';
+  }catch(error){
+    input.value='';
+    q('bookPublishFontStatus').textContent='Could not read .ttf: '+String(error);
+  }
+}
+function bookPublishClearFont(){
+  q('bookPublishFont').value='';
+  bookPublishState.fontBase64='';
+  bookPublishState.fontName='';
+  bookPublishInvalidate();
+  q('bookPublishFontStatus').textContent='Default PDF fonts (Western characters only).';
+}
+function bookPublishClearCover(){
+  q('bookPublishCover').value='';
+  bookPublishState.coverBase64='';
+  bookPublishState.coverName='';
+  bookPublishInvalidate();
+  q('bookPublishCoverStatus').textContent='No cover selected.';
+}
+function bookPublishInvalidate(){
+  bookPublishState.snapshot=null;
+  q('bookPublishPreviewStatus').textContent='Chapter choices or metadata changed. Preview again before exporting.';
+  q('bookPublishPreviewStatus').className='status';
+  for(const id of ['bookPublishDocx','bookPublishEpub','bookPublishPdf'])
+    q(id).disabled=true;
+}
+async function bookPublishInit(){
+  await loadProjects();
+  const project=q('bookPublishProject');
+  const selected=project.value||S.story.project;
+  project.innerHTML=projectOptions(selected);
+  if(S.projects.some(p=>p.project_id===selected))project.value=selected;
+  await bookPublishSelectProject();
+}
+async function bookPublishSelectProject(){
+  const project=q('bookPublishProject').value;
+  const item=S.projects.find(p=>p.project_id===project);
+  const selector=q('bookPublishBook');
+  const previous=selector.value||S.story.book;
+  selector.replaceChildren();
+  for(const b of (item&&item.books)||[])selector.appendChild(new Option(b.title||b.id,b.id));
+  if((item&&item.books||[]).some(b=>b.id===previous))selector.value=previous;
+  await bookPublishOptions();
+}
+async function bookPublishOptions(){
+  const project=q('bookPublishProject').value;
+  const book=q('bookPublishBook').value;
+  const key=project+'::'+book;
+  bookPublishInvalidate();
+  if(!project||!book){
+    q('bookPublishChoices').replaceChildren();
+    q('bookPublishStatus').textContent='Choose an existing Story Forge project and book.';
+    return;
+  }
+  if(bookPublishState.sourceKey===key&&bookPublishState.entries.length){
+    bookPublishDraw();
+    return;
+  }
+  const r=await api('/api/writer/publishing/book/options?project_id='+
+    encodeURIComponent(project)+'&book_id='+encodeURIComponent(book));
+  if(project!==q('bookPublishProject').value||book!==q('bookPublishBook').value)return;
+  if(!r.ok){
+    bookPublishState.sourceKey='';
+    bookPublishState.entries=[];
+    q('bookPublishChoices').replaceChildren();
+    q('bookPublishStatus').textContent=r.message||'Could not load chapter versions.';
+    return;
+  }
+  bookPublishState.sourceKey=key;
+  bookPublishState.entries=(r.chapters||[]).map(item=>({
+    chapter:item.chapter,filename:item.latest_filename,
+    versions:item.versions,include:true
+  }));
+  q('bookPublishTitle').value=r.book_title||'Untitled Book';
+  q('bookPublishStatus').textContent=r.chapters.length+
+    ' saved chapter(s) found. All are selected by default; adjust selection and reading order before preview.';
+  bookPublishDraw();
+}
+function bookPublishDraw(){
+  const root=q('bookPublishChoices');
+  root.replaceChildren();
+  for(let i=0;i<bookPublishState.entries.length;i++){
+    const chapter=bookPublishState.entries[i];
+    const card=document.createElement('div');card.className='card';
+    const row=document.createElement('div');row.className='row';
+    const checkbox=document.createElement('input');
+    checkbox.type='checkbox';checkbox.checked=chapter.include;
+    checkbox.setAttribute('aria-label','Include chapter '+chapter.chapter);
+    checkbox.addEventListener('change',()=>{chapter.include=checkbox.checked;bookPublishInvalidate();});
+    const name=document.createElement('strong');
+    name.textContent=chapter.chapter;
+    row.appendChild(checkbox);row.appendChild(name);
+    const version=document.createElement('select');
+    version.setAttribute('aria-label','Saved version of '+chapter.chapter);
+    for(const v of chapter.versions)
+      version.appendChild(new Option('Version '+v.version+' · '+v.filename,v.filename));
+    version.value=chapter.filename;
+    version.addEventListener('change',()=>{
+      chapter.filename=version.value;
+      bookPublishInvalidate();
+    });
+    row.appendChild(version);
+    function move(label,where,disabled){
+      const button=document.createElement('button');
+      button.className='btn';button.type='button';
+      button.textContent=label;button.disabled=disabled;
+      button.addEventListener('click',()=>{
+        const temp=bookPublishState.entries[where];
+        bookPublishState.entries[where]=bookPublishState.entries[i];
+        bookPublishState.entries[i]=temp;
+        bookPublishInvalidate();bookPublishDraw();
+      });
+      row.appendChild(button);
+    }
+    move('↑',i-1,i===0);
+    move('↓',i+1,i===bookPublishState.entries.length-1);
+    card.appendChild(row);root.appendChild(card);
+  }
+}
+function bookPublishRequest(){
+  return {
+    project_id:q('bookPublishProject').value,
+    book_id:q('bookPublishBook').value,
+    title:q('bookPublishTitle').value,
+    author:q('bookPublishAuthor').value,
+    cover_jpeg_base64:bookPublishState.coverBase64,
+    pdf_ttf_base64:bookPublishState.fontBase64,
+    chapters:bookPublishState.entries.filter(e=>e.include).map(e=>({
+      chapter:e.chapter,filename:e.filename
+    }))
+  };
+}
+async function bookPublishPreview(){
+  bookPublishInvalidate();
+  const payload=bookPublishRequest();
+  if(!payload.chapters.length){
+    q('bookPublishPreviewStatus').textContent='Select at least one saved chapter.';
+    return;
+  }
+  q('bookPublishPreviewStatus').textContent='Checking the selected saved versions…';
+  const snapshotKey=bookPublishState.sourceKey;
+  const result=await api('/api/writer/publishing/book/preview',payload);
+  if(snapshotKey!==bookPublishState.sourceKey ||
+     JSON.stringify(bookPublishRequest())!==JSON.stringify(payload)){
+    bookPublishInvalidate();
+    q('bookPublishPreviewStatus').textContent=
+      'The selected chapters or book details changed while previewing. Preview again.';
+    return;
+  }
+  if(!result.ok){
+    q('bookPublishPreviewStatus').textContent=result.message||'Book preview failed.';
+    q('bookPublishPreviewStatus').className='status err';
+    return;
+  }
+  bookPublishState.snapshot={
+    payload:JSON.stringify(payload),
+    token:result.confirmation_token,
+    sourceKey:bookPublishState.sourceKey
+  };
+  q('bookPublishPreviewStatus').textContent=
+    'READ-ONLY PREVIEW — '+result.title+
+    '\nChapters: '+result.chapter_count+' · Total words: '+result.total_words+
+    '\nCover: '+(result.cover_present?
+      ('author-supplied RGB JPEG ('+result.cover_dimensions.join(' × ')+')'):'none')+
+    '\nPDF font: '+(result.unicode_pdf_font_present?
+      'author-selected Unicode TrueType (simple glyph positioning only)':
+      'built-in Western-character PDF font')+
+    '\n\n'+result.chapters.map((c,i)=>(
+      (i+1)+'. '+c.title+' · v'+c.version+' · '+c.words+' words'+
+      '\n    '+c.excerpt.replace(/\s+/g,' ').slice(0,140)
+    )).join('\n\n')+
+    '\n\nNo source files were changed. Export will verify this exact selection again.';
+  q('bookPublishPreviewStatus').className='status ok';
+  for(const id of ['bookPublishDocx','bookPublishEpub','bookPublishPdf'])
+    q(id).disabled=false;
+}
+async function bookPublishDownload(format){
+  const snapshot=bookPublishState.snapshot;
+  const payload=bookPublishRequest();
+  if(!snapshot || snapshot.sourceKey!==bookPublishState.sourceKey ||
+     snapshot.payload!==JSON.stringify(payload)){
+    bookPublishInvalidate();
+    toast('The book changed. Preview your selected chapters again.','err');
+    return;
+  }
+  const status=q('bookPublishDownloadStatus');
+  status.textContent='Generating the selected '+format.toUpperCase()+' edition in memory…';
+  try{
+    const response=await fetch('/api/writer/publishing/book/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...payload,format,confirmation_token:snapshot.token})
+    });
+    if(!response.ok){
+      let error;try{error=await response.json();}catch(e){}
+      throw new Error(error&&error.message||'Export failed: HTTP '+response.status);
+    }
+    const blob=await response.blob();
+    const match=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    const name=match?match[1]:'Kayock_Book.'+format;
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    status.textContent=name+' downloaded. Only selected saved versions were included; no manuscripts were edited.';
+    status.className='status ok';
+  }catch(error){
+    status.textContent=String(error.message||error);
+    status.className='status err';
+  }
+}
+let finishPdfFontBase64='';
+async function finishPdfFontChange(){
+  const input=q('finishPdfFont');
+  const file=input.files&&input.files[0];
+  finishPdfFontBase64='';
+  if(!file){
+    q('finishPdfFontStatus').textContent='Default PDF font selected.';
+    return;
+  }
+  if(file.size<512||file.size>3*1024*1024||!/\.ttf$/i.test(file.name)){
+    input.value='';
+    q('finishPdfFontStatus').textContent='Choose a .ttf file up to 3 MB.';
+    return;
+  }
+  try{
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    let raw='';
+    for(let i=0;i<bytes.length;i+=16384)
+      raw+=String.fromCharCode(...bytes.subarray(i,i+16384));
+    finishPdfFontBase64=btoa(raw);
+    q('finishPdfFontStatus').textContent='Font '+file.name+
+      ' selected for PDF only. It will be embedded in the download; choose one you are licensed to embed.';
+  }catch(e){
+    input.value='';
+    q('finishPdfFontStatus').textContent=String(e);
+  }
+}
+async function finishingExportPackage(format){
+  const text=q('finishText').value;
+  if(!text.trim()){
+    toast('Add or import writing into the Finishing Desk first.','err');
+    return;
+  }
+  const payload={
+    title:q('finishTitle').value,
+    author:q('finishAuthor').value,
+    writing_type:q('finishType').value,
+    text,format,
+    ...(format==='pdf'?{pdf_ttf_base64:finishPdfFontBase64}:{})
+  };
+  q('finishPublishingStatus').textContent='Building a '+format.toUpperCase()+' file locally…';
+  try{
+    const response=await fetch('/api/writer/publishing/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!response.ok){
+      let error;
+      try{error=await response.json();}catch(e){}
+      throw new Error(error&&error.message||'Export failed: HTTP '+response.status);
+    }
+    const blob=await response.blob();
+    const match=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    const filename=match?match[1]:'Kayock_Writing.'+format;
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;link.download=filename;
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    q('finishPublishingStatus').textContent=filename+' downloaded. No manuscript file was saved or overwritten.';
+    q('finishPublishingStatus').className='status ok';
+  }catch(e){
+    q('finishPublishingStatus').textContent=String(e.message||e);
+    q('finishPublishingStatus').className='status err';
+  }
 }
 function finishingExport(format){
   const text=q('finishText').value;
@@ -1057,6 +3167,17 @@ async function saveCraftConfig(){
 
 /* ============================ boot ============================ */
 window.addEventListener('DOMContentLoaded',()=>{
+  syncNavLayout();
+  if(window.ResizeObserver){
+    const observer=new ResizeObserver(()=>syncNavLayout());
+    observer.observe(q('appbar'));
+  }
+  window.addEventListener('resize',syncNavLayout);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&q('tree').classList.contains('open')){
+      closeTree();q('burger').focus();
+    }
+  });
   show('home');renderHome();setInterval(async()=>{
     const st=await api('/api/status');const dot=q('modelDot');
     dot.className=(st&&st.model&&st.model.online)?'online':'offline';
@@ -1075,13 +3196,13 @@ _HTML = r"""<!doctype html><html lang="en"><head>
 <style>__CSS__</style>
 </head><body>
 <header id="appbar">
-  <button id="burger" onclick="openTree()">☰ Menu</button>
+  <button id="burger" type="button" onclick="openTree()" aria-controls="tree" aria-expanded="false">☰ Menu</button>
   <span class="brand">Kayock Writer <small>— Novel Forge · Poetry Forge · Short Story Forge</small></span>
   <span style="flex:1"></span>
   <span class="status"><span id="modelDot"></span><span id="modelLabel">checking model…</span></span>
 </header>
 <div id="layout">
-<nav id="tree">
+<nav id="tree" aria-label="Writer sections">
   <button class="nav active" data-page="home" onclick="show('home')">Writer Home</button>
 
   <div class="group">Poetry Forge</div>
@@ -1112,6 +3233,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <button class="nav" data-page="storychapters" onclick="show('storychapters')">Chapter Planner &amp; Cards</button>
     <button class="nav" data-page="storyeditor" onclick="show('storyeditor')">Chapter Editor</button>
     <button class="nav" data-page="storydrafts" onclick="show('storydrafts')">Draft Workspace</button>
+    <button class="nav" data-page="sceneboard" onclick="show('sceneboard')">Visual Scene Corkboard</button>
     <button class="nav" data-page="storyprose" onclick="show('storyprose')">Prose Workspace</button>
   </div>
 
@@ -1364,6 +3486,91 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     </div>
     <div id="nfStatus" class="status">No universe loaded.</div>
   </div>
+  <div class="card wide"><h3>Novel Forge Backup Recovery</h3>
+    <p class="small">Choose a previously saved universe backup, inspect the differences, then explicitly confirm the restore. A new backup of your current version is made first. Nothing restores automatically.</p>
+    <div class="row">
+      <div><label>Saved backup</label><select id="nfBackupSelect" onchange="clearBackupPreview()"><option value="">Load a saved universe first…</option></select></div>
+      <div class="fixed"><button class="btn" onclick="renderBackupOptions()">Refresh backups</button>
+        <button class="btn" onclick="previewUniverseBackup()">Preview selected backup</button></div>
+    </div>
+    <div id="nfBackupPreview" class="status">No restore preview. Existing writing is unchanged.</div>
+    <button id="nfBackupRestore" class="btn danger" onclick="restoreUniverseBackup()" disabled>Confirm restore of previewed version</button>
+  </div>
+  <div class="card wide"><h3>Living Story Bible — Canon Review</h3>
+    <p class="small">Facts stay proposed until approved. Only approved facts qualify as canon. No manuscript or existing universe lists are changed here.</p>
+    <div id="nfCanonList" class="status">Load or save a universe to review canon.</div>
+    <details><summary>Propose a sourced canon fact</summary>
+      <div class="row">
+        <div><label>Type</label><select id="nfCanonKind" onchange="toggleCanonRelationshipFields()"><option value="character">Character</option><option value="location">Location</option><option value="artifact">Artifact</option><option value="event">Event</option><option value="relationship">Relationship</option><option value="thread">Plot thread</option><option value="rule">World rule</option></select></div>
+        <div><label>Subject</label><input id="nfCanonSubject" type="text" placeholder="Character or event name"></div>
+      </div>
+      <label>Proposed fact</label><textarea id="nfCanonClaim" placeholder="State the specific fact in your own words."></textarea>
+      <div class="row">
+        <div><label>Evidence source</label><input id="nfCanonSource" type="text" placeholder="Chapter 3, scene 2"></div>
+        <div><label>Chapter (optional)</label><input id="nfCanonChapter" type="text" placeholder="03"></div>
+      </div>
+      <label>Exact supporting excerpt</label><textarea id="nfCanonQuote" placeholder="Copy a short passage from the original manuscript."></textarea>
+      <div class="row">
+        <div><label>Fictional world time (optional)</label><input id="nfCanonWorldTime" type="text" placeholder="Day 4"></div>
+        <div><label>Narrative order (optional)</label><input id="nfCanonNarrative" type="text" placeholder="Book 1, Chapter 3"></div>
+      </div>
+      <div class="row">
+        <div><label>Which characters explicitly know this fact? (optional, comma-separated)</label><input id="nfCanonKnownBy" type="text" placeholder="Elena, Marcus"></div>
+        <div><label>When they learned it (optional)</label><input id="nfCanonLearnedTime" type="text" placeholder="Day 4 or YYYY-MM-DD"></div>
+      </div>
+      <p class="small">Blank means unspecified, not public knowledge. Learning time is independent of when the world event occurred.</p>
+      <div id="nfCanonRelationshipFields" style="display:none">
+        <div class="row">
+          <div><label>Related character / entity</label><input id="nfCanonRelatedTo" type="text" placeholder="Marcus"></div>
+          <div><label>Relationship type</label><input id="nfCanonRelationType" type="text" placeholder="Sibling, ally, rival, mentor…"></div>
+        </div>
+        <p class="small">Both fields create an explicit relationship link after approval. No connections are inferred from free-form claims.</p>
+      </div>
+      <button class="btn primary" onclick="proposeCanonFact()">Submit for review</button>
+    </details>
+  </div>
+  <div class="card wide"><h3>Relationship Explorer — approved Story Bible</h3>
+    <p class="small">Interactive character/entity map of explicit, approved relationships only. Click a node to focus its connections. Every link retains the original author-approved claim and source. No model is called.</p>
+    <div class="row">
+      <div><label>Focus entity (optional)</label><input id="nfGraphFocus" type="text" placeholder="Elena"></div>
+      <div class="fixed"><button class="btn primary" onclick="renderRelationshipGraph()">Draw relationships</button>
+        <button class="btn" onclick="clearRelationshipFocus()">Show all</button></div>
+    </div>
+    <div id="nfGraphStatus" class="status">Load a saved universe and draw its approved relationships.</div>
+    <div id="nfGraph" style="width:100%;max-width:900px;overflow:auto"></div>
+    <div id="nfGraphEvidence"></div>
+  </div>
+  <div class="card wide"><h3>Canon Retrieval &amp; Continuity Workshop</h3>
+    <p class="small">Read-only. Searches approved facts with source citations, then checks narrow explicit contradictions in an unsaved passage. It does not rewrite, save or automatically approve anything.</p>
+    <label>Search passage or character / topic</label><textarea id="nfCanonSearch" placeholder="A character, scene, plot element, or a draft excerpt…"></textarea>
+    <div class="row">
+      <div><label>Maximum approved facts (1–200)</label><input id="nfCanonMax" type="number" min="1" max="200" value="12"></div>
+      <div class="fixed"><button class="btn primary" onclick="previewCanonContext()">Retrieve approved facts</button></div>
+    </div>
+    <div id="nfCanonPreview" class="status">Load a universe and search approved canon.</div>
+    <label>Draft excerpt for continuity review (unsaved)</label>
+    <textarea id="nfCanonDraft" class="big" placeholder="Paste a passage. Compare it against approved facts, without modifying either."></textarea>
+    <div class="row">
+      <div><label>Draft's fictional-world time (optional)</label>
+        <input id="nfCanonDraftWorldTime" type="text" placeholder="Day 4 or YYYY-MM-DD"></div>
+      <div class="fixed">    <button class="btn" onclick="checkCanonDraft()">Check possible continuity tensions</button></div>
+    </div>
+    <p class="small">With a time set, the checker compares the latest approved state at or before that time and skips incompatible or undated facts instead of inventing chronology.</p>
+    <div id="nfCanonWarnings" class="status">A narrow, evidence-linked check for opposing character states or scar details. Time and point of view may resolve apparent differences.</div>
+    <details><summary>World chronology (author-declared)</summary>
+      <button class="btn" onclick="viewCanonChronology()">View approved chronology</button>
+      <div id="nfCanonChronology" class="status">Only Day N and YYYY-MM-DD are sorted, in separate timelines. Narrative order remains independent.</div>
+    </details>
+    <details><summary>Character knowledge (author-declared)</summary>
+      <p class="small">Shows only facts explicitly marked as known to the selected character. If you specify a story time, unknown or incomparable learning times remain uncertain.</p>
+      <div class="row">
+        <div><label>Character name</label><input id="nfKnowledgeCharacter" type="text" placeholder="Elena"></div>
+        <div><label>As of world time (optional)</label><input id="nfKnowledgeTime" type="text" placeholder="Day 7 or YYYY-MM-DD"></div>
+        <div class="fixed"><button class="btn" onclick="viewCharacterKnowledge()">Review knowledge</button></div>
+      </div>
+      <div id="nfCanonKnowledge" class="status">Knowledge is never inferred from characters appearing in the same scene.</div>
+    </details>
+  </div>
   <div class="card wide"><h3>Story Bible Export</h3>
     <div class="row"><div><label>Readiness note</label><input id="nfReadiness" type="text" placeholder="draft, review, publish-ready…"></div>
     <div class="fixed"><button class="btn primary" onclick="exportStoryBible()">Export Story Bible (JSON + Markdown + Text)</button></div></div>
@@ -1446,6 +3653,60 @@ _HTML = r"""<!doctype html><html lang="en"><head>
   </div>
 </section>
 
+<section class="page" id="pg-sceneboard">
+  <div class="hero"><h1>Visual Scene Corkboard</h1>
+    <p>Plan scenes in lanes, arrange them by drag-and-drop or keyboard-friendly controls, and leave saved chapter drafts untouched.</p></div>
+  <div class="card wide">
+    <div class="row">
+      <div><label>Story Forge project</label><select id="sceneBoardProject" onchange="sceneBoardUpdateBooks();seriesOutlineRefresh();sceneBoardRefresh()"></select></div>
+      <div><label>Book</label><select id="sceneBoardBook" onchange="sceneBoardClearEditor();seriesOutlineDraw();sceneBoardRefresh()"></select></div>
+      <div class="fixed"><button class="btn" onclick="sceneBoardRefresh()">Refresh board</button></div>
+    </div>
+    <div id="sceneBoardStatus" class="status">Choose an existing project and book. This is a separate planning board.</div>
+  </div>
+  <div class="card wide"><h3>Series / Book / Act Outline</h3>
+    <p class="small">Optional organization for this Story Forge project. Acts belong to existing books; renaming an act keeps stable links from scenes. No project manifest or prose is rewritten.</p>
+    <div class="row">
+      <div><label>Series title (optional)</label><input id="seriesPlanTitle" maxlength="160" placeholder="A planned series or saga"></div>
+      <div class="fixed"><button class="btn" onclick="seriesSaveDetails()">Save series details</button></div>
+    </div>
+    <label>Series notes</label><textarea id="seriesPlanNotes" maxlength="6000"></textarea>
+    <div id="seriesPlanStatus" class="status">Select a Story Forge project to organize acts.</div>
+    <h4>Acts in selected book</h4>
+    <div id="seriesPlanActs"></div>
+    <div class="row">
+      <div><label>New act title</label><input id="seriesActTitle" maxlength="140" placeholder="Act I — Arrival"></div>
+      <div><label>Act summary</label><input id="seriesActSummary" maxlength="3000"></div>
+      <div class="fixed"><button class="btn" onclick="seriesAddAct()">Add act</button></div>
+    </div>
+  </div>
+  <div class="card wide">
+    <h3 id="sceneBoardEditLabel">New scene card</h3>
+    <div class="row">
+      <div><label>Scene title</label><input id="sceneBoardTitle" type="text" maxlength="160"></div>
+      <div><label>Chapter label</label><input id="sceneBoardChapter" type="text" maxlength="160" placeholder="Chapter 3"></div>
+    </div>
+    <div class="row">
+      <div><label>Point of view</label><input id="sceneBoardPov" type="text" maxlength="120"></div>
+      <div><label>Location</label><input id="sceneBoardLocation" type="text" maxlength="160"></div>
+    </div>
+    <div class="row">
+      <div><label>Act (optional, from series outline)</label><select id="sceneBoardAct"><option value="">No act assigned</option></select></div>
+      <div><label>Linked saved chapter draft (optional, read-only reference)</label><select id="sceneBoardDraft"><option value="">No chapter draft linked</option></select></div>
+    </div>
+    <p class="small">A link must point to a saved draft in this book, with a matching chapter label when one is supplied. Linking never imports or changes the draft.</p>
+    <label>Scene summary</label><textarea id="sceneBoardSummary" maxlength="4000" placeholder="Goal, conflict, turn, and outcome"></textarea>
+    <label>Beats / story notes</label><textarea id="sceneBoardBeats" maxlength="6000"></textarea>
+    <div class="row"><button class="btn primary" id="sceneBoardSave" onclick="sceneBoardSave()">Add scene</button>
+      <button class="btn" onclick="sceneBoardClearEditor()">Cancel editing</button></div>
+    <p class="small">Cards are manually authored. No AI calls, manuscript edits, automatic publishing, or irreversible deletion.</p>
+  </div>
+  <div class="card wide"><h3>Scene lanes</h3>
+    <p class="small">Drag a card to a lane or another card, or use Move, ↑, and ↓. Parked cards remain saved.</p>
+    <div id="sceneBoardLanes" class="scene-lanes"></div>
+  </div>
+</section>
+
 <section class="page" id="pg-storydrafts">
   <div class="hero"><h1>Draft Workspace</h1>
   <p>Versioned chapter drafts: save, continue, history, and side-by-side compare.</p></div>
@@ -1475,6 +3736,32 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div class="fixed"><button class="btn" onclick="storyDraftsCompare()">Compare</button></div>
     </div>
     <div id="storyDraftsCompare" class="status">Diff metrics and a unified-diff preview appear here.</div>
+  </div>
+  <div class="card wide"><h3>Alternative Draft Branches</h3>
+    <p class="small">Fork a saved chapter version into an independent alternative. Each branch accumulates its own immutable versions. Nothing merges into or replaces the main draft automatically.</p>
+    <div class="row">
+      <div><label>Fork from saved version</label><select id="storyBranchSource"><option value="">Choose a saved chapter version…</option></select></div>
+      <div><label>Alternative name</label><input id="storyBranchName" type="text" maxlength="100" placeholder="An alternate ending"></div>
+      <div class="fixed"><button class="btn" onclick="storyBranchCreate()">Create alternative</button></div>
+    </div>
+    <div class="row">
+      <div><label>Saved alternatives for this chapter</label><select id="storyBranchSelect"><option value="">Select an alternative…</option></select></div>
+      <div class="fixed"><button class="btn" onclick="storyBranchLoad()">Load alternative</button>
+        <button class="btn" onclick="storyBranchRefresh()">Refresh alternatives</button></div>
+    </div>
+    <div id="storyBranchInfo" class="small">Choose a project, book, and chapter.</div>
+    <label>Alternative draft editor — independent, unsaved until explicitly saved</label>
+    <textarea id="storyBranchText" class="big" placeholder="Load an alternative to edit it here. Main drafts stay unchanged."></textarea>
+    <div class="row"><button class="btn primary" onclick="storyBranchSave()">Save new alternative version</button>
+      <button class="btn" onclick="storyBranchCompare()">Compare saved alternative with source</button></div>
+    <div id="storyBranchStatus" class="status">No branch selected; no changes to canonical drafts.</div>
+    <pre id="storyBranchCompare" class="status" style="white-space:pre-wrap;max-height:330px;overflow:auto">Diff preview is read-only.</pre>
+    <div class="card"><h4>Accept an alternative as a new chapter version</h4>
+      <p class="small">First preview the saved branch against the latest canonical chapter. If either changes, the confirmation expires. Acceptance appends a NEW draft version through the existing save workflow; earlier versions and the branch remain available.</p>
+      <div class="row"><button class="btn" onclick="storyBranchAcceptancePreview()">Preview acceptance and diff</button>
+        <button class="btn primary" id="storyBranchAccept" onclick="storyBranchAccept()" disabled>Accept previewed alternative as a new main draft version</button></div>
+      <pre id="storyBranchAcceptStatus" class="status" style="white-space:pre-wrap;max-height:330px;overflow:auto">Preview the saved alternative and current main draft before accepting.</pre>
+    </div>
   </div>
 </section>
 
@@ -1546,6 +3833,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
   <div class="card wide"><h3>Working passage (unsaved)</h3>
     <div class="row">
       <div><label>Title</label><input id="finishTitle" type="text" value="Untitled"></div>
+      <div><label>Author for exports (optional)</label><input id="finishAuthor" type="text" maxlength="160" placeholder="Author name"></div>
       <div><label>Type</label><select id="finishType"><option value="poem">Poem</option><option value="short_story">Short story</option><option value="novel">Novel chapter</option><option value="prose" selected>Prose</option></select></div>
     </div>
     <label>Import from an existing work area</label>
@@ -1556,20 +3844,174 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <option value="weaver">The Weaver</option></select></div>
       <div class="fixed"><button class="btn" onclick="finishingImport(q('finishSource').value)">Copy into finishing desk</button></div></div>
     <label>Paste or edit the passage here</label><textarea id="finishText" class="big" placeholder="Your original passage stays unchanged in its Forge."></textarea>
+    <details><summary>Optional Story Bible references — author controlled</summary>
+      <p class="small">Off by default. When enabled, editorial requests can reference only approved, relevant facts from the selected universe. Your original draft is never changed automatically.</p>
+      <label><input id="finishUseCanon" type="checkbox"> Include approved canon in this review</label>
+      <div class="row">
+        <div><label>Saved universe</label><select id="finishCanonUniverse"><option value="">Select a saved universe…</option></select></div>
+        <div><label>Maximum relevant facts (not the model context window)</label><input id="finishCanonLimit" type="number" min="1" max="200" value="12"></div>
+      </div>
+    </details>
+    <details><summary>Optional Voice DNA — own your editorial voice</summary>
+      <p class="small">Create author-owned style guides with writing traits and constraints. Samples are optional; if you save one, it stays in a local private profile file. Guides are OFF by default. Explicitly enabling a guide sends its reference text, including any saved samples, to your configured model endpoint for that one review.</p>
+      <label><input id="finishUseVoiceDna" type="checkbox"> Include selected Voice DNA reference in this review</label>
+      <div class="row">
+        <div><label>Saved Voice DNA guides</label><select id="finishVoiceDnaSelect"><option value="">Choose author-owned style guide…</option></select></div>
+        <div class="fixed"><button class="btn" onclick="voiceDnaInspect()">Inspect selected guide</button>
+          <button class="btn" onclick="voiceDnaDelete()">Delete guide</button></div>
+      </div>
+      <textarea id="finishVoiceDnaPreview" readonly placeholder="Inspection shows only the guide you select."></textarea>
+      <details><summary>Create a personal Voice DNA guide</summary>
+        <div class="row">
+          <div><label>Profile name</label><input id="dnaName" maxlength="100" placeholder="My narrative voice"></div>
+          <div><label>Author</label><input id="dnaAuthor" maxlength="160"></div>
+        </div>
+        <label>Distinctive traits (one per line)</label><textarea id="dnaTraits" placeholder="First-person intimacy…"></textarea>
+        <label>Choices to preserve (one per line)</label><textarea id="dnaPreserve" placeholder="Keep deliberately abrupt sentences…"></textarea>
+        <label>What the editor should avoid (one per line)</label><textarea id="dnaAvoid" placeholder="Do not flatten colloquial dialogue…"></textarea>
+        <label>Optional author-owned excerpt (max 2,000 characters)</label>
+        <textarea id="dnaSample" maxlength="2000" placeholder="Leave blank to save style guidance without a writing sample."></textarea>
+        <button class="btn" onclick="voiceDnaCreate()">Save local Voice DNA guide</button>
+      </details>
+      <div id="finishVoiceDnaStatus" class="status">A guide has no effect until explicitly included in a review.</div>
+    </details>
     <div class="row"><div><label>Editorial mode</label><select id="finishMode">
       <option value="review">Critique: actionable notes only</option>
+      <option value="developmental">Developmental editor: structure, pacing and motivation</option>
+      <option value="voice_audit">Voice audit: protect distinctive style</option>
       <option value="suggestion">Optional revised passage (never auto-apply)</option></select></div>
       <div><label>Direction / areas of concern</label><input id="finishDirection" type="text" placeholder="Keep my voice; focus on pacing…"></div>
-      <div class="fixed"><button class="btn primary" onclick="finishingReview()">Ask model to review</button></div></div>
+      <div class="fixed"><button class="btn primary" onclick="finishingReview()">Stream review</button>
+      <button class="btn" id="finishStop" onclick="finishingCancel()" disabled>Stop</button>
+      <button class="btn" onclick="finishingReviewClassic()">Classic review</button></div></div>
     <div id="finishStatus" class="status">A review uses the model endpoint configured in Settings. No model is started or reserved by this tool.</div>
     <label>Model response — review or suggested revision</label><textarea id="finishResult" class="big" readonly placeholder="Suggestions appear here, separate from your original."></textarea>
   </div>
+  <details class="card wide"><summary><strong>Editorial Council — v2.0 (author-controlled preview)</strong></summary>
+    <p class="small">Invite specialized reviewers to examine only the passage currently in the Finishing Desk. You choose 1–3 roles. Each role uses the model already configured in Settings, sequentially; one model call per role. All selected reviewers get the original text, not each other's opinion. No tools or manuscript write permissions are granted.</p>
+    <div class="row">
+      <div><label><input type="checkbox" id="councilStory" checked> Story Architect — structure, pacing, motivations</label></div>
+      <div><label><input type="checkbox" id="councilContinuity"> Continuity Editor — canon, timeline, perspective</label></div>
+      <div><label><input type="checkbox" id="councilVoice" checked> Voice Guardian — protect distinctive style</label></div>
+      <div><label><input type="checkbox" id="councilLine"> Line Editor — optional sentence-level suggestions</label></div>
+    </div>
+    <details><summary>Model assignments (optional, per reviewer)</summary>
+      <p class="small">Each role defaults to the currently configured model. Select from the saved model profiles in Settings to use a different existing endpoint/model for that role. These are on-demand requests only. A saved profile retains its own timeout; Writer does not change the active model or start a new server. API credentials for the active endpoint are never forwarded to a different endpoint.</p>
+      <div class="row">
+        <div><label>Story Architect model</label><select id="councilModelStory"><option value="">Active model</option></select></div>
+        <div><label>Continuity Editor model</label><select id="councilModelContinuity"><option value="">Active model</option></select></div>
+        <div><label>Voice Guardian model</label><select id="councilModelVoice"><option value="">Active model</option></select></div>
+        <div><label>Line Editor model</label><select id="councilModelLine"><option value="">Active model</option></select></div>
+        <div><label>Optional synthesis model</label><select id="councilModelSynthesis"><option value="">Active model</option></select></div>
+        <div class="fixed"><button class="btn" onclick="councilLoadModels()">Refresh saved model profiles</button></div>
+      </div>
+      <div class="status" id="councilModelStatus">The active model is used unless you select a saved profile. No model connection has been made.</div>
+    </details>
+    <p class="small">Approved Story Bible facts and Voice DNA are included only if you enabled them above. Results are shown separately. No stage starts automatically; optional synthesis is a separate model call and never rewrites or accepts a draft.</p>
+    <div class="row">
+      <button class="btn primary" id="councilRunButton" onclick="councilRun()">Run selected Council reviews</button>
+      <button class="btn" id="councilStopButton" onclick="councilStop()" disabled>Stop Council</button>
+      <button class="btn" id="councilSynthesizeButton" onclick="councilSynthesize()" disabled>Synthesize completed reports (optional)</button>
+    </div>
+    <div class="status" id="councilStatus">No Council run. Original writing remains untouched.</div>
+    <label>Current reviewer stream (read-only)</label>
+    <textarea id="councilLive" class="big" readonly placeholder="Live reviewer feedback appears here."></textarea>
+    <h4>Completed independent reviews</h4>
+    <div id="councilReports"><p class="small">Reviewer reports will appear here after each role finishes.</p></div>
+    <label>Optional Council synthesis (read-only)</label>
+    <textarea id="councilSummary" class="big" readonly placeholder="No synthesis runs unless you request it separately."></textarea>
+    <details><summary><strong>Author Decision Board — review suggestions one at a time</strong></summary>
+      <p class="small">Highlight a specific recommendation in a completed reviewer report and click its Add selected recommendation button. You can also write a personal note below. Mark each item Approved for consideration, Rejected, Deferred or Pending. These are editorial decisions only—not permission to modify, replace or publish your manuscript. Nothing is auto-extracted.</p>
+      <div id="councilDecisionBoard"><p class="small">No decisions yet.</p></div>
+      <label>Author-added recommendation or note</label>
+      <textarea id="councilDecisionText" maxlength="1500" placeholder="A specific idea to consider, separate from the manuscript."></textarea>
+      <div class="row">
+        <button class="btn" onclick="councilDecisionManual()">Add author note</button>
+        <button class="btn" onclick="councilDecisionExport()">Download decision board JSON</button>
+      </div>
+      <div class="status" id="councilDecisionStatus">Decisions stay in this browser session unless you explicitly download them. No server or manuscript writes.</div>
+    </details>
+    <p class="small">Reports and synthesis exist only in this browser session; they are not automatically saved, applied, published or added to canon. Copy passages manually if you choose to use them. Editing the input or selected roles after review requires fresh reviews before synthesis.</p>
+  </details>
+  <details class="card wide"><summary><strong>Controlled Revision Workspace — author approval required</strong></summary>
+    <p class="small">Compare an editable proposed revision against a verified saved Story Forge chapter. You may manually incorporate any Council suggestions you choose. This workspace does not ask a model to edit or automatically apply recommendations. Preview the exact changes first; then explicitly approve appending a NEW canonical draft version. All earlier versions remain available.</p>
+    <div class="row">
+      <div><label>Story Forge project</label><select id="revisionProject" onchange="revisionSelectProject()"></select></div>
+      <div><label>Book</label><select id="revisionBook" onchange="revisionOptions()"></select></div>
+      <div class="fixed"><button class="btn" onclick="revisionOptions()">Refresh saved chapters</button></div>
+    </div>
+    <div class="row">
+      <div><label>Saved chapter</label><select id="revisionChapter" onchange="revisionInvalidate()"></select></div>
+      <div class="fixed"><button class="btn" onclick="revisionLoad()">Load latest saved chapter</button></div>
+    </div>
+    <div class="row">
+      <div><label>Original canonical draft (read-only)</label><textarea id="revisionOriginal" class="big" readonly></textarea></div>
+      <div><label>Proposed author revision (editable; not yet saved)</label>
+        <textarea id="revisionCandidate" class="big" oninput="revisionInvalidate()" placeholder="Load a chapter and edit a separate proposal. Revision previews refuse content over 80,000 characters rather than trimming it."></textarea></div>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="revisionUseFinishingText()">Use Finishing Desk text as candidate</button>
+      <button class="btn primary" onclick="revisionPreview()">Preview precise changes</button>
+    </div>
+    <pre id="revisionDiff" class="status" style="white-space:pre-wrap;max-height:420px;overflow:auto">Choose and load a chapter, edit the candidate, and preview before approval.</pre>
+    <label><input id="revisionApproval" type="checkbox" onchange="revisionApprovalChanged()"> I have reviewed this exact candidate and approve saving it as a NEW draft version</label>
+    <button class="btn primary" id="revisionApproveButton" onclick="revisionAccept()" disabled>Save approved revision as NEW version</button>
+    <div id="revisionStatus" class="status">No revision loaded. Nothing has been written.</div>
+    <p class="small">Changes to the candidate, saved chapter or draft history invalidate the preview. Preview is read-only; only the final author-approved action can save a new version. No automatic approval, model calls, overwrites, or manuscript editing occurs.</p>
+  </details>
+  <div class="card wide"><h3>Full-Book Assembly &amp; Publishing</h3>
+    <p class="small">Assemble existing saved Story Forge chapter drafts in exactly the order you choose. Pick which chapters to include and which saved version of each to publish. Preview the assembled manuscript before downloading. Original drafts and version history remain untouched.</p>
+    <div class="row">
+      <div><label>Story Forge project</label><select id="bookPublishProject" onchange="bookPublishSelectProject()"></select></div>
+      <div><label>Book</label><select id="bookPublishBook" onchange="bookPublishOptions()"></select></div>
+      <div class="fixed"><button class="btn" onclick="bookPublishState.sourceKey='';bookPublishOptions()">Refresh saved versions</button></div>
+    </div>
+    <div class="row">
+      <div><label>Book title</label><input id="bookPublishTitle" maxlength="200" oninput="bookPublishInvalidate()"></div>
+      <div><label>Author</label><input id="bookPublishAuthor" maxlength="160" oninput="bookPublishInvalidate()"></div>
+    </div>
+    <div class="row">
+      <div><label>Optional author-supplied cover artwork (RGB JPEG, max 2 MB)</label>
+        <input id="bookPublishCover" type="file" accept=".jpg,.jpeg,image/jpeg" onchange="bookPublishCoverChange()"></div>
+      <div class="fixed"><button class="btn" onclick="bookPublishClearCover()">Clear cover</button></div>
+    </div>
+    <div id="bookPublishCoverStatus" class="status">No cover selected. Cover files are used for this export only, not stored in Writer.</div>
+    <div class="row">
+      <div><label>Optional Unicode PDF font (a .ttf you are licensed to embed, max 3 MB)</label>
+        <input id="bookPublishFont" type="file" accept=".ttf" onchange="bookPublishFontChange()"></div>
+      <div class="fixed"><button class="btn" onclick="bookPublishClearFont()">Use default font</button></div>
+    </div>
+    <div id="bookPublishFontStatus" class="status">Default PDF fonts (Western characters only). No font files are bundled or stored in Writer.</div>
+    <p class="small">Selected TrueType fonts can preserve many Unicode glyphs in a searchable PDF. No bidirectional or complex-script shaping, color emoji, or automatic fallback is implemented. Missing glyphs cause an error. DOCX and EPUB remain the preferred choice for complex scripts.</p>
+    <div id="bookPublishStatus" class="status">Choose an existing Story Forge project and book.</div>
+    <h4>Saved chapters — selection and reading order</h4>
+    <div id="bookPublishChoices"></div>
+    <button class="btn primary" onclick="bookPublishPreview()">Preview exact chapter selection</button>
+    <pre id="bookPublishPreviewStatus" class="status" style="white-space:pre-wrap;max-height:390px;overflow:auto">Preview required before export. Unsaved work areas are not included.</pre>
+    <div class="row">
+      <button class="btn primary" id="bookPublishDocx" onclick="bookPublishDownload('docx')" disabled>Download book DOCX</button>
+      <button class="btn" id="bookPublishEpub" onclick="bookPublishDownload('epub')" disabled>Download book EPUB</button>
+      <button class="btn" id="bookPublishPdf" onclick="bookPublishDownload('pdf')" disabled>Download book PDF</button>
+    </div>
+    <div id="bookPublishDownloadStatus" class="status">No book export has been requested.</div>
+    <p class="small">DOCX and EPUB preserve Unicode text; PDF supports Western characters by default and many additional Unicode glyphs with an explicitly selected TrueType font. Missing glyphs or unsupported font formats are rejected, never silently replaced. Covers and fonts are used for this download, not saved into manuscript folders.</p>
+  </div>
   <div class="card wide"><h3>Craft Suite handoff</h3>
     <p class="small">Download a manuscript file and import it into WordCraft or another editor. There is no assumed Craft Suite import API.</p>
-    <button class="btn primary" onclick="finishingExport('html')">Download print-style HTML</button>
+    <button class="btn primary" onclick="finishingExportPackage('docx')">Download DOCX</button>
+    <button class="btn" onclick="finishingExportPackage('epub')">Download EPUB 3</button>
+    <button class="btn" onclick="finishingExportPackage('pdf')">Download basic PDF</button>
+    <button class="btn" onclick="finishingExport('html')">Download print-style HTML</button>
     <button class="btn" onclick="finishingExport('md')">Download Markdown</button>
     <button class="btn" onclick="finishingExport('txt')">Download plain text</button>
     <button class="btn" onclick="finishingOpenCraft()">Open Craft Suite (configured URL)</button>
+    <div class="row">
+      <div><label>Optional TrueType font for single-passage PDF (.ttf, max 3 MB)</label>
+        <input id="finishPdfFont" type="file" accept=".ttf" onchange="finishPdfFontChange()"></div>
+      <div id="finishPdfFontStatus" class="small">Default PDF font selected. No files stored in Writer.</div>
+    </div>
+    <div id="finishPublishingStatus" class="status">Files are generated on request from the Finishing Desk passage. They are not saved into your manuscript folders.</div>
+    <p class="small">Single-passage DOCX, EPUB and basic PDF exports remain available. For a multi-chapter manuscript, use the Full-Book Assembly workspace above. EPUB includes navigation; DOCX includes an editable contents page; PDF uses conservative WinAnsi fonts with explicit unsupported-character rejection.</p>
   </div>
 </section>
 
@@ -1596,8 +4038,23 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" onclick="saveModelConfig()">Save endpoint settings</button>
       <button class="btn" onclick="testModelConfig()">Test connection</button>
+      <button class="btn" onclick="inspectModelCapabilities()">Inspect advertised capabilities (no generation)</button>
     </div>
     <div id="cfgTestStatus" class="status">The test lists reachable endpoints and probes one chat completion.</div>
+    <div id="cfgCapabilitiesStatus" class="status">Capability inspection is optional and read-only. Missing metadata will be shown as unknown, not unsupported.</div>
+  </div>
+  <div class="card wide"><h3>Saved Model Profiles (optional)</h3>
+    <p class="small">Keep multiple local endpoint/model presets without starting them or changing your active model. Profiles do not store API keys, context sizes, or new timeout defaults. To activate one, first stage its fields, review the credentials and settings, then use the existing Save endpoint settings button above.</p>
+    <div class="row">
+      <div><label>Preset name</label><input id="cfgProfileName" type="text" placeholder="e.g. Writing model — Portable"></div>
+      <div class="fixed"><button class="btn" onclick="saveModelProfile()">Save form as new preset</button></div>
+    </div>
+    <div class="row">
+      <div><label>Saved presets</label><select id="cfgProfileSelect"><option value="">Choose a saved preset…</option></select></div>
+      <div class="fixed"><button class="btn primary" onclick="stageModelProfile()">Load preset into form (not active)</button>
+        <button class="btn" onclick="deleteModelProfile()">Delete preset</button></div>
+    </div>
+    <div id="cfgProfileStatus" class="status">Presets are local and never activate a model automatically.</div>
   </div>
   <div class="card wide"><h3>Optional Craft Suite browser handoff</h3>
     <p class="small">Enter the LAN address of your Craft Suite homepage. This only opens the site in a separate tab; export/import remains manual until its APIs are verified.</p>

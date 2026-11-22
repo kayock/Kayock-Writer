@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .storage import Store, contained, jread, jwrite, now, slug
+from .storage import Store, atomic_write_text, contained, jread, jwrite, now, slug
 
 KNOWN_UNIVERSE_KEYS = {
     'universe', 'file_name', 'premise', 'characters', 'locations', 'artifacts',
@@ -28,6 +28,33 @@ def lines_to_list(value):
     if isinstance(value, list):
         return [str(x).strip() for x in value if str(x).strip()]
     return [x.strip() for x in str(value or '').splitlines() if x.strip()]
+
+def render_universe_markdown(data: Dict[str, Any]) -> str:
+    """Canonical Markdown mirror, shared by saves and recovery."""
+    name = str(data.get('universe') or data.get('file_name') or 'Untitled Universe')
+    return (
+            f"# {name}\n\n"
+        f"Modified: {data['modified']}\n\n"
+        f"## Premise\n\n{data['premise']}\n\n"
+        f"## Characters\n\n" + "\n".join(f"- {x}" for x in data['characters']) + "\n\n"
+        f"## Locations\n\n" + "\n".join(f"- {x}" for x in data['locations']) + "\n\n"
+        f"## Artifacts\n\n" + "\n".join(f"- {x}" for x in data['artifacts']) + "\n\n"
+        f"## Timeline\n\n" + "\n".join(f"- {x}" for x in data['timeline']) + "\n\n"
+        f"## Mysteries / Unresolved Threads\n\n" + "\n".join(f"- {x}" for x in data['mysteries']) + "\n\n"
+        f"## Scenes\n\n" + "\n".join(f"- {x}" for x in data.get('scenes', [])) + "\n\n"
+        f"## Notes\n\n{data['notes']}\n"
+    )
+
+
+def _read_existing_universe(path: Path) -> Dict[str, Any]:
+    """Refuse to replace damaged existing author data as if it were empty."""
+    try:
+        result = json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError('Existing universe JSON is damaged; refusing to overwrite.') from exc
+    if not isinstance(result, dict):
+        raise ValueError('Existing universe is not a JSON object; refusing to overwrite.')
+    return result
 
 
 class NovelForge:
@@ -79,7 +106,10 @@ class NovelForge:
         p = self.novel_path(name)
         if not p or not p.exists():
             return {'ok': False, 'message': 'Universe not found.'}
-        d = jread(p, {})
+        try:
+            d = _read_existing_universe(p)
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         d.update({'ok': True, 'file_name': p.stem, 'path': str(p)})
         return d
 
@@ -90,7 +120,10 @@ class NovelForge:
         p = self.novel_path(name)
         if not p:
             return {'ok': False, 'message': 'Invalid universe name.'}
-        old = jread(p, {}) if p.exists() else {}
+        try:
+            old = _read_existing_universe(p) if p.exists() else {}
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         data = {
             'universe': name,
             'file_name': p.stem,
@@ -112,21 +145,13 @@ class NovelForge:
         for key, value in (old or {}).items():
             if key not in KNOWN_UNIVERSE_KEYS and key not in data:
                 data[key] = value
+        if p.exists():
+            self.store.backup_file(p, kind='universes')
         jwrite(p, data)
         md = self.novel_md_path(name)
-        md.write_text(
-            f"# {name}\n\n"
-            f"Modified: {data['modified']}\n\n"
-            f"## Premise\n\n{data['premise']}\n\n"
-            f"## Characters\n\n" + "\n".join(f"- {x}" for x in data['characters']) + "\n\n"
-            f"## Locations\n\n" + "\n".join(f"- {x}" for x in data['locations']) + "\n\n"
-            f"## Artifacts\n\n" + "\n".join(f"- {x}" for x in data['artifacts']) + "\n\n"
-            f"## Timeline\n\n" + "\n".join(f"- {x}" for x in data['timeline']) + "\n\n"
-            f"## Mysteries / Unresolved Threads\n\n" + "\n".join(f"- {x}" for x in data['mysteries']) + "\n\n"
-            f"## Scenes\n\n" + "\n".join(f"- {x}" for x in data.get('scenes', [])) + "\n\n"
-            f"## Notes\n\n{data['notes']}\n",
-            encoding='utf-8',
-        )
+        if md.exists():
+            self.store.backup_file(md, kind='universe_markdown')
+        atomic_write_text(md, render_universe_markdown(data))
         return {'ok': True, 'message': f'Saved universe: {name}', 'universe': data,
                 'name': p.stem, 'path': str(p), 'markdown': str(md)}
 
@@ -136,9 +161,15 @@ class NovelForge:
         p = self.novel_path(name)
         if not p or not p.exists():
             return {'ok': False, 'message': 'Universe not found.'}
-        old = jread(p, {})
+        try:
+            old = _read_existing_universe(p)
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         if not new_title:
             new_title = (old.get('universe') or p.stem) + ' Copy'
+        target = self.novel_path(new_title)
+        if target is None or target.exists():
+            return {'ok': False, 'message': 'Duplicate target already exists or has an invalid name.'}
         old['universe'] = new_title
         old['source'] = 'Novel Forge Duplicate'
         return self.save_universe(old)
@@ -151,11 +182,17 @@ class NovelForge:
         p = self.novel_path(name)
         if not p or not p.exists():
             return {'ok': False, 'message': 'Universe not found.'}
-        old = jread(p, {})
+        try:
+            old = _read_existing_universe(p)
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         old_title = old.get('universe') or p.stem
+        new_target = self.novel_path(new_title)
+        if new_target is None or (new_target != p and new_target.exists()):
+            return {'ok': False, 'message': 'Rename target already exists or is invalid.'}
         old['universe'] = new_title
         result = self.save_universe(old)
-        if result.get('ok'):
+        if result.get('ok') and result.get('name') != p.stem:
             try:
                 p.unlink()
                 md = self.novel_md_path(name)

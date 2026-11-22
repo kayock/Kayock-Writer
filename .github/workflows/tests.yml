@@ -6,11 +6,17 @@ permissions:
   contents: read
 jobs:
   unittest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        include:
+          - os: ubuntu-24.04
+            python-version: "3.9"
+          - os: ubuntu-24.04
+            python-version: "3.12"
+          - os: windows-2022
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,4 +24,81 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python tests/run_tests.py
       - run: python tests/test_upgrade.py
+      - run: python tests/test_foundation.py
+      - run: python tests/test_novel_storage_safety.py
+      - run: python tests/test_recovery.py
+      - run: python tests/test_canon_api.py
+      - run: python tests/test_context_engine.py
+      - run: python tests/test_timeline.py
+      - run: python tests/test_relationships.py
+      - run: python tests/test_scene_board.py
+      - run: python tests/test_draft_branches.py
+      - run: python tests/test_series_outline.py
+      - run: python tests/test_branch_accept.py
+      - run: python tests/test_model_capabilities.py
+      - run: python tests/test_model_profiles.py
+      - run: python tests/test_voice_dna.py
+      - run: python tests/test_editorial_council.py
+      - run: python tests/test_council_model_routing.py
+      - run: python tests/test_revision_workspace.py
+      - run: python tests/test_install_staging.py
+      - run: python tests/test_publishing.py
+      - run: python tests/test_book_publishing.py
+      - run: python tests/test_cover_unicode_pdf.py
+      - run: python tests/test_streaming.py
       - run: python tests/verify_kayock_writer.py
+      - run: python tests/check_ui_js.py
+
+  browser-smoke:
+    name: Browser release smoke (Chromium, mock-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install CI-only Playwright (no runtime dependency)
+        run: npm install --no-save --ignore-scripts playwright@1.65.1
+      - name: Install Chromium only
+        run: npx playwright install --with-deps chromium
+      - name: Prepare synthetic JPEG for optional publishing UI checks
+        run: python tests/prepare_publishing_ci_assets.py
+      - name: Test actual browser buttons against isolated fixture
+        run: node tests/browser_release_smoke.cjs
+        env:
+          PYTHON: python
+      - name: Validate real downloaded EPUB/DOCX and prepare browser proof
+        run: python tests/prepare_epub_reader_proof.py
+      - name: Render EPUB title and chapter XHTML in Chromium
+        run: node tests/render_epub_browser_proof.cjs
+      - name: Render synthetic PDF pages with independent reader
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y poppler-utils
+          pdftoppm -f 1 -l 3 -r 110 -png test-results/release-proofs/Fixture_Manuscript.pdf test-results/release-proofs/pdf-page
+          pdftotext -layout test-results/release-proofs/Fixture_Manuscript.pdf test-results/release-proofs/pdf-extracted.txt
+          grep -Fq "The lantern glowed above the empty shore." test-results/release-proofs/pdf-extracted.txt
+          test -s test-results/release-proofs/pdf-page-1.png
+          pdftotext -layout test-results/ci-private/unicode-cover.pdf test-results/ci-private/unicode-cover-extracted.txt
+          grep -Fq "Ω" test-results/ci-private/unicode-cover-extracted.txt
+          pdftoppm -f 1 -l 1 -r 90 -png test-results/ci-private/unicode-cover.pdf test-results/ci-private/unicode-page
+          test -s test-results/ci-private/unicode-page-1.png
+      - name: Upload synthetic book proofs for manual visual acceptance
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kayock-writer-synthetic-publishing-proofs
+          path: test-results/release-proofs/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload failure screenshot (synthetic fixture only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kayock-writer-browser-failure
+          path: test-results/browser-failure.png
+          if-no-files-found: ignore

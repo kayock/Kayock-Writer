@@ -15,6 +15,98 @@ It is a **standalone extraction of the writing tools from [FOXAI](https://github
 > [!IMPORTANT]
 > **LAN security:** v1.1.0 has **no built-in user login or HTTPS**. Anyone who can reach the Writer web port may be able to read or modify writing and settings. Use it only on a trusted LAN, or bind to \`127.0.0.1\` for local-only access. **Do not expose it directly to the public internet.**
 
+## Development release-readiness verification
+
+The development branch now includes a dedicated **real Chromium browser smoke
+test** in GitHub Actions. It exercises the actual Finishing Desk interface
+against a disposable sample manuscript and mock model: Council roles,
+author decisions, optional synthesis, explicitly approved revision and
+DOCX/EPUB/PDF browser downloads. Playwright and Chromium are installed
+**only in CI**; Writer's Python runtime remains dependency-free.
+
+This is not real-model validation or final release approval. GitHub
+also tests an **isolated Linux source installation** and **Windows/Linux
+copied-source launch**, checking that custom config/manuscripts remain
+untouched. The browser job independently renders a synthetic book PDF
+and uploads a short-lived **DOCX/EPUB/PDF visual proof bundle**.
+Actual local-model behavior, real-world upgrade/rollback, and human
+visual proofing in Word, e-readers and PDF viewers still require
+hands-on acceptance. See the
+[Release Acceptance Checklist](docs/RELEASE_ACCEPTANCE.md)
+and [one-session Real Model Acceptance](docs/REAL_MODEL_ACCEPTANCE.md) for all
+remaining gates, with no claimed result for tests that have not run.
+
+## Development branch preview — not yet a release
+
+The [open draft pull request](https://github.com/kayock/Kayock-Writer/pull/1)
+contains ongoing v1.2–v1.5 development work. **The released version
+remains v1.1.0 on `main`**; these development features are not yet
+included in the default `git clone` installation.
+
+The development branch adds author-controlled recovery, streaming
+editorial review, approved Story Bible facts with chronology and
+relationships, safe model presets, a visual Story Forge corkboard,
+independent alternative drafts, and explicit reviewed acceptance
+as new chapter versions. Its Finishing Desk now also offers private,
+opt-in Voice DNA references, developmental/voice audit modes, and
+DOCX/EPUB publishing.
+
+**New v2.0 preview — Editorial Council:** In the Finishing Desk, select
+up to three specialized reviewers and explicitly run their independent,
+sequential reviews through the already configured model. Read each
+report in its own panel, stop the run if needed, and optionally request
+one separately confirmed synthesis. No reviewer automatically starts
+another project, changes canon, edits a manuscript, or saves a draft.
+Each chosen role makes a full model call; synthesis makes one more.
+
+**Per-role model assignments and manual decisions (v2.0 preview):**
+Authors can choose a saved Writer Model Profile independently for
+each Council reviewer and for synthesis. Model choices are scoped to
+that run and never change the active model; credentials for the
+active endpoint are not sent to a different endpoint. The separate
+Author Decision Board lets the writer highlight individual reviewer
+recommendations, mark them Approved for consideration, Rejected,
+Deferred or Pending, and explicitly download a JSON record. These
+decisions do **not** apply any manuscript edits.
+
+**Controlled Revision Workspace (v2.0 preview):** You can load the
+latest verified saved Story Forge chapter, edit a separate proposed
+revision, preview its unified diff, and explicitly approve writing a
+**new canonical draft version**. Earlier saved versions remain
+untouched; changing the source history or proposal after preview
+invalidates approval. Council suggestions can inform your choices,
+but neither a recommendation nor a decision-board approval is
+automatically applied. No model is called during revision acceptance.
+
+**New publishing workflow under development:** Open
+**Editorial & Craft Handoff → Full-Book Assembly & Publishing**,
+choose a Story Forge project and book, select the exact saved
+version of each chapter, adjust their reading order, and preview.
+Only then can you download a verified **book DOCX, EPUB 3, or basic PDF**.
+No source manuscript file is changed by preview or export.
+
+The book publisher also supports an **optional author-selected JPEG
+cover** embedded in DOCX, EPUB and PDF. Common private JPEG metadata
+(EXIF/XMP, Photoshop tags and comments) is stripped before packaging.
+Covers are never saved into the writing library.
+
+The default PDF renderer uses standard PDF Courier fonts and Windows-1252.
+For many additional Unicode glyphs, the author may **optionally supply
+a licensed TrueType (.ttf) font for that PDF export**. Writer embeds it
+only in the download, without bundling, downloading or saving the font.
+This is a simple left-to-right glyph renderer without complex-script
+shaping, bidirectional reordering, color emoji or font fallback.
+Unsupported glyphs are rejected rather than replaced. **Use DOCX or
+EPUB for complex scripts**, and visually proof each book before publishing.
+
+These features run without new mandatory Python dependencies. Automated
+tests use mock data and run on Linux and Windows; they do not replace
+real-model, browser, Word, e-reader or visual PDF acceptance testing.
+The pull request is deliberately left in draft until that validation
+and release approval are complete.
+
+[Development details and API notes](docs/STREAMING_AND_CANON.md)
+
 ## At a glance
 
 | Workspace | What you can do |

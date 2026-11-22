@@ -33,6 +33,16 @@ change firewalls, or start models. It prints the command to launch Writer.
 
 Alternatively, use the Git clone in place; no install helper is required.
 
+**Development release candidate testing:** GitHub Actions runs
+tests/test_install_staging.py on Windows and Linux. On Linux it invokes
+the real install-linux.sh helper **only with an explicitly set
+temporary destination**, checks repeated install preservation of
+config.json, private add-ons and writing data, and refuses a symlink
+destination. On Windows it tests a clean copied-source startup, not
+a Windows native installer. These checks **do not authorize or
+perform any in-place production upgrade or rollback**. See
+[release acceptance](RELEASE_ACCEPTANCE.md) for the remaining tests.
+
 ## 3. Start Kayock Writer
 
 ```bash
