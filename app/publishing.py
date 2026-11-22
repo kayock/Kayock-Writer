@@ -18,6 +18,7 @@ from xml.sax.saxutils import escape
 MIMES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "epub": "application/epub+zip",
+    "pdf": "application/pdf",
 }
 
 def _safe_xml(value: str) -> str:
@@ -39,7 +40,7 @@ def _source(payload: Dict[str, Any]) -> Dict[str, str]:
     writing_type = payload.get("writing_type", "prose")
     fmt = payload.get("format")
     if fmt not in MIMES:
-        raise ValueError("Choose DOCX or EPUB format.")
+        raise ValueError("Choose DOCX, EPUB or PDF format.")
     if not isinstance(title, str) or not title.strip() or len(title) > 200:
         raise ValueError("A title up to 200 characters is required.")
     if not isinstance(author, str) or len(author) > 160:
@@ -215,7 +216,16 @@ def _epub(source: Dict[str, str]) -> bytes:
 
 def build_export(payload: Dict[str, Any]) -> Dict[str, Any]:
     source = _source(payload)
-    content = _docx(source) if source["format"] == "docx" else _epub(source)
+    if source["format"] == "docx":
+        content = _docx(source)
+    elif source["format"] == "epub":
+        content = _epub(source)
+    else:
+        from .pdf_publishing import make_pdf
+        content = make_pdf(
+            source["title"], source["author"],
+            [{"title": source["title"], "text": source["text"]}]
+        )
     return {
         "ok": True, "filename": source["filename"],
         "content_type": MIMES[source["format"]], "body": content,
