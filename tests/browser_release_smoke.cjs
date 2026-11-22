@@ -54,7 +54,7 @@ async function waitStatus(page, id, text) {
   );
 }
 
-async function downloadAndInspect(page, button, format, prefix) {
+async function downloadAndInspect(page, button, format, prefix, options = {}) {
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 18000 }),
     page.locator(button).click()
@@ -68,15 +68,18 @@ async function downloadAndInspect(page, button, format, prefix) {
   // reviewable artifact. Never capture any private/production manuscripts.
   const proofDirectory = path.join(resultFolder, 'release-proofs');
   fs.mkdirSync(proofDirectory, { recursive: true });
-  fs.writeFileSync(
-    path.join(proofDirectory, path.basename(download.suggestedFilename())),
-    file
-  );
+  if (options.keep !== false) {
+    fs.writeFileSync(
+      path.join(proofDirectory, options.proofName || path.basename(download.suggestedFilename())),
+      file
+    );
+  }
   assert.ok(file.length > 400, format + ' output is unexpectedly small');
   assert.ok(file.subarray(0, prefix.length).equals(prefix),
             format + ' does not have the expected file signature');
   process.stdout.write('OK browser download: ' + download.suggestedFilename() +
                        ' (' + file.length + ' bytes)\n');
+  return file;
 }
 
 async function exercise(page, url) {
@@ -208,6 +211,38 @@ async function exercise(page, url) {
   requireText(await page.locator('#bookPublishDownloadStatus').textContent(),
               'no manuscripts were edited', 'Publishing status');
   process.stdout.write('OK browser book publishing: verified chapter v2, DOCX EPUB PDF\n');
+
+  // Exercise the actual optional artwork/font controls, rather than calling
+  // the publishing API directly. All samples come from temporary CI fixtures.
+  // The system font is used in CI only; do not bundle or upload its bytes.
+  const coverFile = path.join(resultFolder, 'ci-private', 'synthetic-cover.jpg');
+  const fontFile = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';
+  assert.ok(fs.existsSync(coverFile), 'Synthetic CI JPEG not generated');
+  assert.ok(fs.existsSync(fontFile), 'CI Unicode TrueType font unavailable');
+  await page.locator('#bookPublishCover').setInputFiles(coverFile);
+  await waitStatus(page, 'bookPublishCoverStatus', 'Selected synthetic-cover.jpg');
+  assert.equal(await page.locator('#bookPublishDocx').isDisabled(), true,
+               'Selecting cover must invalidate book preview');
+  await page.locator('#bookPublishFont').setInputFiles(fontFile);
+  await waitStatus(page, 'bookPublishFontStatus', 'Selected font DejaVuSans.ttf');
+  await page.locator('#bookPublishTitle').fill('Fixture Manuscript Ω');
+  await page.getByRole('button', { name: 'Preview exact chapter selection' }).click();
+  await waitStatus(page, 'bookPublishPreviewStatus', 'READ-ONLY PREVIEW');
+  const optionPreview = await page.locator('#bookPublishPreviewStatus').textContent();
+  requireText(optionPreview, 'author-supplied RGB JPEG', 'Cover preview');
+  requireText(optionPreview, 'author-selected Unicode TrueType', 'Unicode font preview');
+  await downloadAndInspect(page, '#bookPublishDocx', 'docx', Buffer.from([0x50, 0x4b]),
+                           { proofName: 'cover-edition.docx' });
+  await downloadAndInspect(page, '#bookPublishEpub', 'epub', Buffer.from([0x50, 0x4b]),
+                           { proofName: 'cover-edition.epub' });
+  const fontPdf = await downloadAndInspect(page, '#bookPublishPdf', 'pdf', Buffer.from('%PDF-'),
+                                           { keep: false });
+  assert.ok(fontPdf.includes(Buffer.from('/FontFile2')),
+            'Unicode PDF did not embed selected TrueType font');
+  assert.ok(fontPdf.includes(Buffer.from('/DCTDecode')),
+            'Unicode PDF did not include the selected cover');
+  fs.writeFileSync(path.join(resultFolder, 'ci-private', 'unicode-cover.pdf'), fontPdf);
+  process.stdout.write('OK optional publishing controls: cover in DOCX/EPUB and font+cover in PDF\n');
 
   // A revision-save response arriving after further typing must not
   // overwrite the author's newly entered unsaved proposal in the browser.
