@@ -26,6 +26,7 @@ jobs:
       - run: python tests/test_upgrade.py
       - run: python tests/test_foundation.py
       - run: python tests/test_canon_api.py
+      - run: python tests/test_context_engine.py
       - run: python tests/test_streaming.py
       - run: python tests/verify_kayock_writer.py
       - run: python tests/check_ui_js.py
