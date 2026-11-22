@@ -29,7 +29,8 @@ characters, or factual assertions. Do not imitate copyrighted passages.
 """
 
 
-def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000) -> Dict[str, Any]:
+def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000,
+                      canon_context: str = "") -> Dict[str, Any]:
     """Share exact validation/prompt rules between classic and streaming reviews."""
     draft = str(payload.get('text') or '')
     mode = str(payload.get('mode') or 'review').strip().casefold()
@@ -46,6 +47,8 @@ def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000) -> Dict[s
         return {'ok': False, 'message': 'Passage exceeds 80,000 characters. Select a chapter or excerpt; nothing was truncated.'}
     max_tokens = max(200, int(max_tokens))
     instruction = REVIEW_SYSTEM if mode == 'review' else SUGGEST_SYSTEM
+    if canon_context:
+        instruction += '\n\n' + canon_context
     messages = [
         {'role': 'system', 'content': instruction},
         {'role': 'user', 'content':
@@ -58,8 +61,9 @@ def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000) -> Dict[s
 
 
 def editorial_review(provider: Provider, payload: Dict[str, Any],
-                     max_tokens: int = 4000) -> Dict[str, Any]:
-    prepared = prepare_editorial(payload, max_tokens)
+                     max_tokens: int = 4000,
+                     canon_context: str = '') -> Dict[str, Any]:
+    prepared = prepare_editorial(payload, max_tokens, canon_context=canon_context)
     if not prepared['ok']:
         return prepared
     response = provider.chat(prepared['messages'],
