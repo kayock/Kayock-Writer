@@ -29,8 +29,8 @@ characters, or factual assertions. Do not imitate copyrighted passages.
 """
 
 
-def editorial_review(provider: Provider, payload: Dict[str, Any],
-                     max_tokens: int = 4000) -> Dict[str, Any]:
+def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000) -> Dict[str, Any]:
+    """Share exact validation/prompt rules between classic and streaming reviews."""
     draft = str(payload.get('text') or '')
     mode = str(payload.get('mode') or 'review').strip().casefold()
     kind = str(payload.get('writing_type') or 'prose').strip().casefold()
@@ -46,18 +46,30 @@ def editorial_review(provider: Provider, payload: Dict[str, Any],
         return {'ok': False, 'message': 'Passage exceeds 80,000 characters. Select a chapter or excerpt; nothing was truncated.'}
     max_tokens = max(200, int(max_tokens))
     instruction = REVIEW_SYSTEM if mode == 'review' else SUGGEST_SYSTEM
-    response = provider.chat([
+    messages = [
         {'role': 'system', 'content': instruction},
         {'role': 'user', 'content':
             f'Type: {kind}\nTitle: {title or "Untitled"}\n'
             f'Author direction: {direction or "Respect the submitted work."}\n'
             'DRAFT START\n' + draft + '\nDRAFT END'},
-    ], max_tokens=max_tokens, temperature=0.35 if mode == 'review' else 0.45)
+    ]
+    return {'ok': True, 'mode': mode, 'draft': draft, 'messages': messages,
+            'max_tokens': max_tokens, 'temperature': 0.35 if mode == 'review' else 0.45}
+
+
+def editorial_review(provider: Provider, payload: Dict[str, Any],
+                     max_tokens: int = 4000) -> Dict[str, Any]:
+    prepared = prepare_editorial(payload, max_tokens)
+    if not prepared['ok']:
+        return prepared
+    response = provider.chat(prepared['messages'],
+                             max_tokens=prepared['max_tokens'],
+                             temperature=prepared['temperature'])
     if not response.get('ok'):
         return {'ok': False, 'message': response.get('message', 'Model did not respond.')}
     result = str(response.get('text') or '')
-    if mode == 'suggestion' and result.strip() == draft.strip():
+    if prepared['mode'] == 'suggestion' and result.strip() == prepared['draft'].strip():
         return {'ok': False, 'message': 'No changes suggested; original is unchanged.'}
-    return {'ok': True, 'mode': mode, 'text': result,
+    return {'ok': True, 'mode': prepared['mode'], 'text': result,
             'saved': False, 'source_unchanged': True,
             'message': 'Review complete. No work was saved or overwritten.'}
