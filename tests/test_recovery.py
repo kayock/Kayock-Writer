@@ -157,6 +157,65 @@ class RecoveryHttpTests(unittest.TestCase):
         self.assertEqual(read["premise"],"Version one")
         self.assertTrue(result["saved_current_backup"])
 
+    def test_concurrent_save_invalidates_old_restore_preview(self):
+        backups=self.get("/api/novelforge/backups?name=Atlas")
+        item=backups["backups"][0]["id"]
+        preview=self.post("/api/novelforge/backups/preview",{
+            "universe":"Atlas","backup_id":item
+        })
+        app=self.writer.RequestHandlerClass.app
+        original=app.novelforge.save_universe
+        save_started=threading.Event()
+        release_save=threading.Event()
+        output={}
+
+        def paused_save(data):
+            if data.get("premise")=="Later author edit":
+                save_started.set()
+                if not release_save.wait(timeout=8):
+                    raise RuntimeError("Test timed out before releasing save")
+            return original(data)
+
+        app.novelforge.save_universe=paused_save
+        def save_worker():
+            try:
+                output["save"]=self.post("/api/novelforge/save",{
+                    "universe":"Atlas","premise":"Later author edit"
+                })
+            except Exception as exc:
+                output["save_error"]=str(exc)
+
+        def restore_worker():
+            try:
+                output["restore"]=self.post("/api/novelforge/backups/restore",{
+                    "universe":"Atlas","backup_id":item,
+                    "confirmation_token":preview["confirmation_token"]
+                })
+            except urllib.error.HTTPError as exc:
+                output["restore_code"]=exc.code
+                output["restore_message"]=exc.read().decode("utf-8")
+            except Exception as exc:
+                output["restore_error"]=str(exc)
+
+        saver=threading.Thread(target=save_worker,daemon=True)
+        restorer=threading.Thread(target=restore_worker,daemon=True)
+        try:
+            saver.start()
+            self.assertTrue(save_started.wait(timeout=5),"Save did not start")
+            restorer.start()
+        finally:
+            release_save.set()
+            saver.join(timeout=10)
+            restorer.join(timeout=10)
+            app.novelforge.save_universe=original
+        self.assertFalse(saver.is_alive())
+        self.assertFalse(restorer.is_alive())
+        self.assertTrue(output.get("save",{}).get("ok"),output)
+        self.assertEqual(output.get("restore_code"),400,output)
+        self.assertEqual(self.get("/api/novelforge/read?name=Atlas")["premise"],
+                         "Later author edit")
+
+
 
 if __name__=="__main__":
     unittest.main(verbosity=2)
