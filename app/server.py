@@ -20,7 +20,7 @@ from .canon import CanonStore
 from .context import preview as preview_canon
 from .continuity import check as check_continuity
 from .editorial import editorial_review, prepare_editorial
-from .editorial_council import ROLES, MAX_ROLES, prepare_council, council_events
+from .editorial_council import ROLES, MAX_ROLES, prepare_council, council_events, resolve_council_models
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .recovery import UniverseRecovery
@@ -451,6 +451,9 @@ class Handler(BaseHTTPRequestHandler):
                 canon_context=self.app.editorial_canon_context(payload),
                 voice_context=self.app.editorial_voice_context(payload),
             )
+            role_models, model_labels = resolve_council_models(
+                plan, self.app.provider, self.app.model_profiles
+            )
         except (ValueError, TypeError) as exc:
             self.json_response({'ok': False, 'message': str(exc)}, code=400)
             return
@@ -473,7 +476,9 @@ class Handler(BaseHTTPRequestHandler):
                 'source_fingerprint': plan['source_fingerprint'],
                 'saved': False
             })
-            for kind, data in council_events(self.app.provider, plan, token):
+            for kind, data in council_events(
+                    self.app.provider, plan, token,
+                    role_providers=role_models, model_labels=model_labels):
                 self._stream_event(kind, data)
         except (BrokenPipeError, ConnectionResetError, OSError):
             token.cancel()
@@ -525,6 +530,9 @@ class Handler(BaseHTTPRequestHandler):
                 ],
                 'max_roles': MAX_ROLES,
                 'automatic_synthesis': False,
+                'saved_profile_selection': True,
+                'synthesis_model_optional': True,
+                'credentials_scope': 'active endpoint credentials are never sent to a different saved profile base URL',
                 'stored': False,
                 'model': app.provider.display_model(),
                 'message': (
