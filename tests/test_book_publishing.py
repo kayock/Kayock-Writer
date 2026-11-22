@@ -216,7 +216,7 @@ class BookPackageTests(BookAssemblyTests):
             self.assertNotIn("completely rewritten.",
                              z.read("OEBPS/chapter_002.xhtml").decode())
             package=z.read("OEBPS/package.opf").decode()
-            self.assertEqual(package.count("<itemref idref=\"c"),3)
+            self.assertEqual(len(re.findall(r'<itemref idref="c[0-9]+"', package)),3)
             self.assertIn('version="3.0"',package)
 
     def test_direct_pdf_contains_pages_no_silent_character_loss(self):
