@@ -242,6 +242,121 @@ class DraftBranches:
                     "canonical_unchanged": True,
                     "message": "Alternative version saved. Main draft and prose manuscripts unchanged."}
 
+    def _acceptance_state(self, project, book, root, base, branch_id):
+        manifest, branch_rev, folder = self._load(base, branch_id)
+        if manifest.get("project_id") != project or manifest.get("book_id") != book:
+            raise ValueError("Alternative belongs to another project or book.")
+        # An alternative can only be accepted into its originating chapter.
+        source, original = self._source(project, book, root, manifest["source_filename"])
+        if source.get("chapter") != manifest.get("chapter") or (
+                source.get("content_sha256") != manifest.get("source_sha256")):
+            raise ValueError("Branch origin no longer matches the saved source record.")
+        alternate = self._read_version(folder, manifest["versions"][-1])
+        draft_manifest_path = root / "Drafts" / book / "draft_manifest.json"
+        if not draft_manifest_path.is_file() or draft_manifest_path.is_symlink():
+            raise ValueError("Canonical chapter draft history is unavailable.")
+        raw = draft_manifest_path.read_bytes()
+        try:
+            history = json.loads(raw.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("Canonical draft history is damaged; no changes made.") from exc
+        if not isinstance(history, dict) or not isinstance(history.get("versions"), list):
+            raise ValueError("Canonical draft history is incompatible; no changes made.")
+        chapter = str(manifest.get("chapter") or "")
+        candidates = [item for item in history["versions"] if
+                      isinstance(item, dict) and item.get("chapter") == chapter]
+        if not candidates:
+            raise ValueError("Canonical chapter no longer exists in draft history.")
+        current = candidates[-1]
+        # Verifies that the currently recorded source is not modified or
+        # missing, and that the latest canonical version is genuinely current.
+        latest, canonical = self._source(project, book, root, current.get("filename"))
+        if latest.get("version") != current.get("version"):
+            raise ValueError("Canonical chapter version changed unexpectedly.")
+        if alternate.strip() == canonical.strip():
+            raise ValueError("Alternative matches the latest saved chapter; no acceptance needed.")
+        token = _digest(
+            b"KayockBranchAcceptV1\0" +
+            project.encode("utf-8") + b"\0" + book.encode("utf-8") + b"\0" +
+            branch_id.encode("ascii") + b"\0" +
+            branch_rev.encode("ascii") + b"\0" +
+            _digest(raw).encode("ascii") + b"\0" +
+            _digest(canonical.encode("utf-8")).encode("ascii") + b"\0" +
+            _digest(alternate.encode("utf-8")).encode("ascii")
+        )
+        return {
+            "manifest": manifest, "branch_revision": branch_rev,
+            "altern_text": alternate, "original_text": original,
+            "current": current, "current_text": canonical,
+            "history_sha256": _digest(raw), "token": token,
+        }
+
+    def preview_accept(self, project_id: str, book_id: str,
+                       branch_id: str) -> Dict[str, Any]:
+        """Read-only acceptance preview with an invalidatable fingerprint."""
+        with self._lock:
+            project, book, root, base = self._scope(project_id, book_id)
+            state = self._acceptance_state(project, book, root, base, branch_id)
+            diff = list(difflib.unified_diff(
+                state["current_text"].splitlines(), state["altern_text"].splitlines(),
+                fromfile="current canonical draft",
+                tofile="selected alternative", lineterm=""
+            ))
+            return {
+                "ok": True, "read_only": True,
+                "project_id": project, "book_id": book,
+                "branch_id": branch_id, "chapter": state["manifest"]["chapter"],
+                "branch_name": state["manifest"]["name"],
+                "branch_version": len(state["manifest"]["versions"]),
+                "current_version": state["current"]["version"],
+                "current_filename": state["current"]["filename"],
+                "expected_next_version": state["current"]["version"] + 1,
+                "main_words": len(state["current_text"].split()),
+                "alternative_words": len(state["altern_text"].split()),
+                "diff_preview": diff[:400], "truncated": len(diff) > 400,
+                "confirmation_token": state["token"],
+                "canonical_unchanged": True,
+                "message": (
+                    "Preview only. Confirm to append this alternative as a "
+                    "NEW canonical chapter draft version. Existing versions "
+                    "will remain saved; no merge or overwrite is performed."
+                ),
+            }
+
+    def accept(self, project_id: str, book_id: str, branch_id: str,
+               confirmation_token: str) -> Dict[str, Any]:
+        """Explicitly append a fresh canonical version, with stale state refusal.
+
+        The API adapter must acquire the common Story Forge draft-write lock,
+        covering ordinary canonical draft saves and alternative acceptance.
+        """
+        if not isinstance(confirmation_token, str) or len(confirmation_token) != 64:
+            raise ValueError("Preview the alternative before accepting it.")
+        with self._lock:
+            project, book, root, base = self._scope(project_id, book_id)
+            state = self._acceptance_state(project, book, root, base, branch_id)
+            if confirmation_token != state["token"]:
+                raise ValueError("Alternative or canonical draft changed since preview. Preview again.")
+            payload = {
+                "project_id": project, "book_id": book,
+                "chapter": state["manifest"]["chapter"],
+                "content": state["altern_text"], "execute": True,
+            }
+            result = self.storyforge.draft_save_action(payload)
+            if not result.get("ok") or not result.get("action_taken"):
+                raise ValueError(result.get("message") or
+                                 "Canonical draft save was rejected.")
+            return {
+                "ok": True, "accepted": True, "branch_id": branch_id,
+                "chapter": state["manifest"]["chapter"],
+                "canonical_version": result["version"],
+                "canonical_path": result["path"],
+                "source_branch_version": len(state["manifest"]["versions"]),
+                "original_versions_preserved": True,
+                "branch_preserved": True,
+                "message": "Alternative accepted as an additional canonical draft version. No earlier versions were overwritten.",
+            }
+
     def compare_source(self, project_id: str, book_id: str, branch_id: str) -> Dict[str, Any]:
         with self._lock:
             project, book, root, base = self._scope(project_id, book_id)
