@@ -37,10 +37,19 @@ version of each chapter, adjust their reading order, and preview.
 Only then can you download a verified **book DOCX, EPUB 3, or basic PDF**.
 No source manuscript file is changed by preview or export.
 
-The basic PDF renderer uses standard PDF Courier fonts and Windows-1252;
-unsupported symbols are rejected rather than replaced. **Use DOCX or
-EPUB for full Unicode**, and expect to perform final page-layout
-checks before distributing a book.
+The book publisher also supports an **optional author-selected JPEG
+cover** embedded in DOCX, EPUB and PDF. Common private JPEG metadata
+(EXIF/XMP, Photoshop tags and comments) is stripped before packaging.
+Covers are never saved into the writing library.
+
+The default PDF renderer uses standard PDF Courier fonts and Windows-1252.
+For many additional Unicode glyphs, the author may **optionally supply
+a licensed TrueType (.ttf) font for that PDF export**. Writer embeds it
+only in the download, without bundling, downloading or saving the font.
+This is a simple left-to-right glyph renderer without complex-script
+shaping, bidirectional reordering, color emoji or font fallback.
+Unsupported glyphs are rejected rather than replaced. **Use DOCX or
+EPUB for complex scripts**, and visually proof each book before publishing.
 
 These features run without new mandatory Python dependencies. Automated
 tests use mock data and run on Linux and Windows; they do not replace
