@@ -101,6 +101,10 @@ def _craft_text(payload: dict) -> str:
 
 
 class MockHandler(BaseHTTPRequestHandler):
+    # Optional Ollama /api/ps payload for selection-mode tests.
+    loaded_models = [{'name': 'mock-model', 'model': 'mock-model'}]
+    last_chat_payload = None
+
     def log_message(self, *args):
         pass
 
@@ -117,6 +121,8 @@ class MockHandler(BaseHTTPRequestHandler):
             self._json({'ok': True})
         elif self.path.startswith('/v1/models'):
             self._json({'object': 'list', 'data': [{'id': 'mock-model'}]})
+        elif self.path.startswith('/api/ps'):
+            self._json({'models': list(MockHandler.loaded_models or [])})
         else:
             self._json({'error': 'not found'}, code=404)
 
@@ -124,6 +130,7 @@ class MockHandler(BaseHTTPRequestHandler):
         n = int(self.headers.get('Content-Length', '0') or 0)
         raw = self.rfile.read(n) if n else b'{}'
         payload = json.loads(raw.decode('utf-8') or '{}')
+        MockHandler.last_chat_payload = payload
         text = _craft_text(payload)
         if payload.get('stream'):
             if 'NO_SSE_TEST' in json.dumps(payload):

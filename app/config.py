@@ -34,6 +34,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "health_path": "/health",
         "health_kind": "auto",      # auto | http_status | openai_models
         "model": "local-model",
+        # fixed = always use model.model
+        # ollama_active = use Ollama /api/ps (never load/unload models)
+        "selection_mode": "fixed",
+        # Send think:false so reasoning models keep token budget for writing
+        "disable_thinking": True,
         "api_key": "",              # prefer KAYOCK_MODEL_API_KEY env var
         "timeout_seconds": 420,
     },

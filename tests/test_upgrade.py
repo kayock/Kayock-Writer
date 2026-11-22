@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused v1.1.0 tests; no live writer or Craft Suite services required."""
+"""Focused upgrade compatibility tests; no live writer or Craft Suite services required."""
 from __future__ import annotations
 import json, subprocess, sys, tempfile, unittest
 from pathlib import Path

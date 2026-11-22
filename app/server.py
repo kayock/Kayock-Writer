@@ -81,6 +81,7 @@ class App:
 
     def status(self) -> Dict[str, Any]:
         health = self.provider.health(timeout=3.0)
+        active = health.get('active') or self.provider.active_model_status(timeout=3.0)
         return {
             'ok': True,
             'app': APP_NAME,
@@ -88,8 +89,12 @@ class App:
             'model': {
                 'base_url': self.provider.base_url(),
                 'model': self.provider.display_model(),
+                'preferred_model': self.provider.preferred_model(),
+                'selection_mode': self.provider.selection_mode(),
+                'loaded_models': active.get('loaded_models') or [],
                 'online': bool(health.get('online')),
                 'health_via': health.get('via', ''),
+                'active_message': active.get('message') or health.get('message') or '',
             },
             'data_dir': str(self.store.root),
             'voice_pack': voices.private_pack_status(),
@@ -98,15 +103,27 @@ class App:
     def save_model_settings(self, d: Dict[str, Any]) -> Dict[str, Any]:
         model = self.cfg.data.setdefault('model', {})
         for key in ('base_url', 'chat_path', 'health_path', 'health_kind', 'model',
-                    'api_key', 'timeout_seconds'):
+                    'selection_mode', 'api_key', 'timeout_seconds'):
             if key in d and d[key] is not None:
-                value = str(d[key]) if key != 'timeout_seconds' else d[key]
-                if key == 'api_key' and str(value) == '':
+                if key == 'timeout_seconds':
+                    model[key] = d[key]
+                elif key == 'api_key' and str(d[key]) == '':
                     continue  # empty means "leave unchanged"
-                if key == 'api_key':
-                    model[key] = str(value)
+                elif key == 'selection_mode':
+                    mode = str(d[key]).strip().casefold()
+                    if mode not in ('fixed', 'ollama_active'):
+                        return {'ok': False,
+                                'message': 'selection_mode must be fixed or ollama_active.'}
+                    model[key] = mode
                 else:
-                    model[key] = value
+                    model[key] = str(d[key])
+        if 'disable_thinking' in d and d['disable_thinking'] is not None:
+            raw = d['disable_thinking']
+            if isinstance(raw, str):
+                model['disable_thinking'] = raw.strip().casefold() not in (
+                    '0', 'false', 'no', 'off')
+            else:
+                model['disable_thinking'] = bool(raw)
         try:
             save_config(self.cfg)
         except Exception as exc:
@@ -116,6 +133,8 @@ class App:
             'message': 'Model endpoint settings saved.',
             'base_url': self.provider.base_url(),
             'model': self.provider.display_model(),
+            'preferred_model': self.provider.preferred_model(),
+            'selection_mode': self.provider.selection_mode(),
             'api_key_set': bool(self.cfg.api_key()),
         }
 

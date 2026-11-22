@@ -53,7 +53,7 @@ python kayock_writer.py --base-url http://127.0.0.1:8080
 Output:
 
 ```
-Kayock Writer 1.1.0
+Kayock Writer 2.0.0
   Serving on http://0.0.0.0:8765  (LAN: use this machine's IP)
   Data dir : .../KayockWriterData
   Model    : local-model @ http://127.0.0.1:8080
@@ -82,7 +82,9 @@ settings in the UI (or copy `config.example.json`).
 | Port | `--port` | `KAYOCK_WRITER_PORT` | `server.port` | `8765` |
 | Data folder | `--data-dir` | `KAYOCK_WRITER_DATA` | `paths.data_dir` | `./KayockWriterData` |
 | Model base URL | `--base-url` | `KAYOCK_MODEL_BASE_URL` | `model.base_url` | `http://127.0.0.1:8080` |
-| Model name | `--model` | `KAYOCK_MODEL_NAME` | `model.model` | `local-model` |
+| Model name | `--model` | `KAYOCK_MODEL_NAME` | `model.model` | `local-model` (preferred name when multiple Ollama models are loaded) |
+| Selection mode | — | — | `model.selection_mode` | `fixed` (`ollama_active` reads Ollama `/api/ps`; never loads/unloads models) |
+| Disable thinking | — | — | `model.disable_thinking` | `true` (sends `think:false` when supported) |
 | Chat path | — | — | `model.chat_path` | `/v1/chat/completions` |
 | Health path | — | — | `model.health_path` | `/health` |
 | Health mode | — | — | `model.health_kind` | `auto` (`openai_models`, fallback `http_status`) |

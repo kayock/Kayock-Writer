@@ -226,8 +226,11 @@ async function renderHome(){
   q('homeStatus').innerHTML=`
     <div class="kv">
       <span class="k">Application</span><span>${esc(d.app||'Kayock Writer')} ${esc(d.version||'')}</span>
-      <span class="k">Model endpoint</span><span>${esc((d.model&&d.model.base_url)||'—')} (${esc((d.model&&d.model.model)||'')})</span>
-      <span class="k">Model status</span><span>${d.model&&d.model.online?'<span class="chip green">online</span>':'<span class="chip red">offline — check Settings</span>'}</span>
+      <span class="k">Model endpoint</span><span>${esc((d.model&&d.model.base_url)||'—')}</span>
+      <span class="k">Active model</span><span>${esc((d.model&&d.model.model)||'—')}${(d.model&&d.model.selection_mode)==='ollama_active'?' <span class="chip green">ollama active</span>':''}</span>
+      <span class="k">Preferred (multi)</span><span>${esc((d.model&&d.model.preferred_model)||'(none)')}</span>
+      <span class="k">Loaded now</span><span>${esc(((d.model&&d.model.loaded_models)||[]).join(', ')||'none')}</span>
+      <span class="k">Model status</span><span>${d.model&&d.model.online?'<span class="chip green">online</span>':'<span class="chip red">offline — '+(esc((d.model&&d.model.active_message)||'check Settings'))+'</span>'}</span>
       <span class="k">Data folder</span><span>${esc(d.data_dir||'')}</span>
       <span class="k">Eric private voice pack</span><span>${d.voice_pack&&d.voice_pack.loaded?`<span class="chip gold">loaded (${d.voice_pack.source_count} source poems)</span>`:'<span class="chip">not installed — derived style settings active</span>'}</span>
     </div>`;
@@ -1834,6 +1837,8 @@ async function renderSettings(){
     const m=S.config.model||{};
     q('cfgBaseUrl').value=m.base_url||'';
     q('cfgModel').value=m.model||'';
+    q('cfgSelectionMode').value=m.selection_mode||'fixed';
+    q('cfgDisableThinking').value=String(m.disable_thinking!==false);
     q('cfgChatPath').value=m.chat_path||'';
     q('cfgHealthPath').value=m.health_path||'';
     q('cfgHealthKind').value=m.health_kind||'auto';
@@ -1848,6 +1853,11 @@ async function renderSettings(){
       <span class="k">Approval phrase required</span><span>${S.config.writing&&S.config.writing.require_approval_phrase?'yes':'no'}</span>
     </div>`;
   }
+  const st=await api('/api/status');
+  const loaded=((st&&st.model&&st.model.loaded_models)||[]);
+  q('cfgActiveModels').innerHTML=loaded.length
+    ?`<span class="chip green">Loaded in Ollama now: ${esc(loaded.join(', '))}</span>`
+    :'<span class="chip">No model currently loaded in Ollama (Writer will not auto-load one).</span>';
   await refreshModelProfiles();
   const vs=await api('/api/voice/pack/status');
   q('cfgVoicePack').innerHTML=vs&&vs.loaded
@@ -1922,6 +1932,8 @@ async function deleteModelProfile(){
 }
 async function saveModelConfig(){
   const payload={base_url:q('cfgBaseUrl').value,model:q('cfgModel').value,
+    selection_mode:q('cfgSelectionMode').value,
+    disable_thinking:q('cfgDisableThinking').value==='true',
     chat_path:q('cfgChatPath').value,health_path:q('cfgHealthPath').value,
     health_kind:q('cfgHealthKind').value,timeout_seconds:Number(q('cfgTimeout').value)||420};
   const key=q('cfgApiKey').value.trim();
@@ -1929,6 +1941,7 @@ async function saveModelConfig(){
   const d=await api('/api/config/model',payload);
   toast(d.message||'Failed.',d.ok?'ok':'err');
   renderHome();
+  renderSettings();
 }
 async function testModelConfig(){
   q('cfgTestStatus').textContent='Probing endpoint…';
@@ -3197,7 +3210,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
 </head><body>
 <header id="appbar">
   <button id="burger" type="button" onclick="openTree()" aria-controls="tree" aria-expanded="false">☰ Menu</button>
-  <span class="brand">Kayock Writer <small>— Novel Forge · Poetry Forge · Short Story Forge</small></span>
+  <span class="brand">Kayock Writer <small>— AI-Assisted Creative Writing Studio · v2.0</small></span>
   <span style="flex:1"></span>
   <span class="status"><span id="modelDot"></span><span id="modelLabel">checking model…</span></span>
 </header>
@@ -3254,8 +3267,8 @@ _HTML = r"""<!doctype html><html lang="en"><head>
 
 <!-- ============ HOME ============ -->
 <section class="page active" id="pg-home">
-  <div class="hero"><h1>Writer Home</h1>
-  <p>What would you like to work on? Opening a room never changes your saved work.</p></div>
+  <div class="hero"><h1>Kayock Writer</h1>
+  <p>AI-Assisted Creative Writing Studio. Draft, revise, and publish with local or online OpenAI-compatible models — without changing saved work when you open a room.</p></div>
   <div class="card wide"><h3>Studio status</h3><div id="homeStatus" class="status">Loading…</div></div>
   <div class="grid">
     <div class="card"><h3>Poetry Forge</h3>
@@ -3272,8 +3285,11 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <p class="small">Universes, story bibles, characters, locations, artifacts, timelines, and mysteries.</p>
       <button class="btn primary" onclick="show('novelforge')">Open Novel Forge</button></div>
     <div class="card"><h3>Story Forge</h3>
-      <p class="small">Approval-gated story projects: chapter cards, continuity handoffs, versioned drafts, and prose.</p>
+      <p class="small">Approval-gated projects with chapter cards, continuity handoffs, protected version history, and prose manuscripts.</p>
       <button class="btn primary" onclick="show('storyoverview')">Open Story Forge</button></div>
+    <div class="card"><h3>Editorial &amp; Craft Handoff</h3>
+      <p class="small">Editorial Council, Story Architect, Author Decision Board, Controlled Revision Workspace, full-book assembly, and DOCX / EPUB 3 / PDF publishing with optional cover art.</p>
+      <button class="btn primary" onclick="show('finishing')">Open Finishing Desk</button></div>
     <div class="card"><h3>The Weaver</h3>
       <p class="small">Weave two to four sources into one new poem, story, clean prose, or Twine piece.</p>
       <button class="btn primary" onclick="show('weaver')">Open The Weaver</button></div>
@@ -4020,10 +4036,19 @@ _HTML = r"""<!doctype html><html lang="en"><head>
   <div class="hero"><h1>Settings</h1>
   <p>Model endpoint, LAN server, storage, and voice pack.</p></div>
   <div class="card wide"><h3>OpenAI-compatible model endpoint</h3>
-    <p class="small">Works with llama.cpp llama-server, LM Studio, Ollama, llamafile, vLLM, text-generation-webui, or any hosted API speaking the OpenAI chat protocol. Changes are saved to config.json and take effect immediately.</p>
+    <p class="small">Works with llama.cpp llama-server, LM Studio, Ollama, llamafile, vLLM, text-generation-webui, or any hosted API speaking the OpenAI chat protocol. Changes are saved to config.json and take effect immediately. With <b>ollama active</b> selection, Writer reads Ollama <code>/api/ps</code> before each generation and never starts, stops, or pulls models.</p>
+    <div id="cfgActiveModels" class="status" style="margin-bottom:8px">Checking loaded models…</div>
     <div class="row">
       <div><label>Base URL</label><input id="cfgBaseUrl" type="text" placeholder="http://127.0.0.1:8080"></div>
-      <div><label>Model name</label><input id="cfgModel" type="text" placeholder="local-model"></div>
+      <div><label>Preferred model name</label><input id="cfgModel" type="text" placeholder="used when multiple models are loaded"></div>
+    </div>
+    <div class="row">
+      <div><label>Model selection</label><select id="cfgSelectionMode">
+        <option value="ollama_active">ollama active (use loaded model)</option>
+        <option value="fixed">fixed (always use preferred name)</option></select></div>
+      <div><label>Disable model thinking</label><select id="cfgDisableThinking">
+        <option value="true">yes — keep tokens for writing</option>
+        <option value="false">no — allow reasoning tokens</option></select></div>
     </div>
     <div class="row">
       <div><label>Chat path</label><input id="cfgChatPath" type="text" placeholder="/v1/chat/completions"></div>

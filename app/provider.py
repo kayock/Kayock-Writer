@@ -10,6 +10,10 @@ speaking the OpenAI chat-completions protocol works:
 Message/response semantics match FOXAI: a system+user pair in, the first
 choice's text content out, `{"ok": False, "message": ...}` on any failure so
 caller workflows never raise.
+
+When ``model.selection_mode`` is ``ollama_active``, the provider reads
+Ollama's ``/api/ps`` before each generation and uses the model currently
+loaded in memory. It never starts, stops, unloads, or pulls models.
 """
 from __future__ import annotations
 
@@ -73,8 +77,23 @@ class Provider:
     def base_url(self) -> str:
         return str(self.cfg.get("model.base_url", "http://127.0.0.1:8080")).rstrip("/")
 
+    def selection_mode(self) -> str:
+        mode = str(self.cfg.get("model.selection_mode", "fixed") or "fixed").casefold()
+        return mode if mode in ("fixed", "ollama_active") else "fixed"
+
+    def preferred_model(self) -> str:
+        return str(self.cfg.get("model.model", "") or "").strip()
+
     def model_name(self) -> str:
-        return str(self.cfg.get("model.model", "local-model"))
+        """Configured/preferred name (not necessarily the live active model)."""
+        return self.preferred_model() or "local-model"
+
+    def disable_thinking(self) -> bool:
+        """Prefer writing content over chain-of-thought token spend."""
+        raw = self.cfg.get("model.disable_thinking", True)
+        if isinstance(raw, str):
+            return raw.strip().casefold() not in ("0", "false", "no", "off")
+        return bool(raw)
 
     def timeout(self) -> int:
         try:
@@ -83,7 +102,10 @@ class Provider:
             return 420
 
     def display_model(self) -> str:
-        return self.model_name() or "active model"
+        resolved = self.resolve_model(timeout=2.0)
+        if resolved.get("ok") and resolved.get("model"):
+            return str(resolved["model"])
+        return self.preferred_model() or "no active model"
 
     # -- endpoints ------------------------------------------------------------
     def chat_url(self) -> str:
@@ -97,6 +119,9 @@ class Provider:
         if not path.startswith("/"):
             path = "/" + path
         return self.base_url() + path
+
+    def ollama_ps_url(self) -> str:
+        return self.base_url() + "/api/ps"
 
     # -- plumbing ---------------------------------------------------------------
     def _request(self, url: str, payload: Dict[str, Any] | None, timeout: float) -> tuple[bool, Any, str]:
@@ -120,6 +145,126 @@ class Provider:
         except Exception as exc:
             return False, None, f"{type(exc).__name__}: {exc}"
 
+    # -- active Ollama model selection ----------------------------------------
+    def list_loaded_models(self, timeout: float = 3.0) -> Dict[str, Any]:
+        """Read-only probe of Ollama ``/api/ps``. Never loads or unloads models."""
+        ok, body, err = self._request(self.ollama_ps_url(), None, timeout)
+        if not ok:
+            return {
+                "ok": False,
+                "models": [],
+                "message": f"Could not query Ollama loaded models at {self.ollama_ps_url()}: {err}",
+            }
+        try:
+            data = json.loads(body)
+        except Exception:
+            return {
+                "ok": False,
+                "models": [],
+                "message": "Ollama /api/ps returned unreadable JSON.",
+            }
+        names: List[str] = []
+        for item in data.get("models") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("model") or item.get("name") or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return {"ok": True, "models": names, "raw_count": len(data.get("models") or [])}
+
+    def resolve_model(self, timeout: float = 3.0) -> Dict[str, Any]:
+        """Pick the model to use for the next request.
+
+        ``ollama_active``:
+          - exactly one loaded → use it
+          - multiple loaded → use Settings preferred model if still loaded
+          - none loaded → clear error (do not auto-load)
+        ``fixed``: use ``model.model`` as before.
+        """
+        mode = self.selection_mode()
+        preferred = self.preferred_model()
+        if mode != "ollama_active":
+            model = preferred or "local-model"
+            return {
+                "ok": True,
+                "model": model,
+                "selection_mode": mode,
+                "preferred_model": preferred,
+                "loaded_models": [],
+                "reason": "fixed",
+            }
+
+        loaded = self.list_loaded_models(timeout=timeout)
+        if not loaded.get("ok"):
+            return {
+                "ok": False,
+                "model": "",
+                "selection_mode": mode,
+                "preferred_model": preferred,
+                "loaded_models": [],
+                "message": loaded.get("message")
+                or "Could not determine which Ollama model is active.",
+            }
+
+        names = list(loaded.get("models") or [])
+        if not names:
+            return {
+                "ok": False,
+                "model": "",
+                "selection_mode": mode,
+                "preferred_model": preferred,
+                "loaded_models": [],
+                "message": (
+                    f"No model is currently loaded at {self.base_url()}. "
+                    "Load a model in Ollama first — Kayock Writer will not "
+                    "start or pull models."
+                ),
+            }
+        if len(names) == 1:
+            return {
+                "ok": True,
+                "model": names[0],
+                "selection_mode": mode,
+                "preferred_model": preferred,
+                "loaded_models": names,
+                "reason": "single_active",
+            }
+        if preferred and preferred in names:
+            return {
+                "ok": True,
+                "model": preferred,
+                "selection_mode": mode,
+                "preferred_model": preferred,
+                "loaded_models": names,
+                "reason": "preferred_among_active",
+            }
+        return {
+            "ok": False,
+            "model": "",
+            "selection_mode": mode,
+            "preferred_model": preferred,
+            "loaded_models": names,
+            "message": (
+                "Multiple models are loaded in Ollama: "
+                + ", ".join(names)
+                + ". Choose one in Settings → Model name (preferred model) "
+                "while it remains loaded. Kayock Writer will not switch or "
+                "unload models automatically."
+            ),
+        }
+
+    def active_model_status(self, timeout: float = 3.0) -> Dict[str, Any]:
+        resolved = self.resolve_model(timeout=timeout)
+        return {
+            "selection_mode": self.selection_mode(),
+            "preferred_model": self.preferred_model(),
+            "active_model": resolved.get("model") or "",
+            "loaded_models": resolved.get("loaded_models") or [],
+            "ok": bool(resolved.get("ok")),
+            "reason": resolved.get("reason", ""),
+            "message": resolved.get("message", ""),
+        }
+
     # -- public API ---------------------------------------------------------------
     def health(self, timeout: float = 3.0) -> Dict[str, Any]:
         """Check the model endpoint. health_kind:
@@ -129,6 +274,8 @@ class Provider:
         """
         kind = str(self.cfg.get("model.health_kind", "auto")).casefold()
         checked = []
+        endpoint_online = False
+        via = ""
         if kind in ("auto", "openai_models"):
             base = self.base_url()
             ok, body, err = self._request(base + "/v1/models", None, timeout)
@@ -136,20 +283,58 @@ class Provider:
             if ok:
                 try:
                     json.loads(body)
-                    return {"ok": True, "online": True, "model": self.display_model(),
-                            "checked": checked, "via": "openai_models"}
+                    endpoint_online = True
+                    via = "openai_models"
                 except Exception:
                     checked[-1]["error"] = "response was not JSON"
-        if kind in ("auto", "http_status"):
+        if not endpoint_online and kind in ("auto", "http_status"):
             ok, _body, err = self._request(self.health_url(), None, timeout)
             checked.append({"endpoint": self.health_url(), "ok": ok, "error": err})
             if ok:
-                return {"ok": True, "online": True, "model": self.display_model(),
-                        "checked": checked, "via": "http_status"}
-        return {"ok": False, "online": False, "model": self.display_model(),
+                endpoint_online = True
+                via = "http_status"
+
+        active = self.active_model_status(timeout=timeout) if self.selection_mode() == "ollama_active" else {
+            "selection_mode": self.selection_mode(),
+            "preferred_model": self.preferred_model(),
+            "active_model": self.preferred_model() or "local-model",
+            "loaded_models": [],
+            "ok": True,
+            "reason": "fixed",
+            "message": "",
+        }
+
+        if not endpoint_online:
+            return {
+                "ok": False,
+                "online": False,
+                "model": active.get("active_model") or self.display_model(),
                 "checked": checked,
+                "active": active,
                 "message": "The configured model endpoint is not responding. "
-                           "Check Settings → Model endpoint."}
+                           "Check Settings → Model endpoint.",
+            }
+
+        if self.selection_mode() == "ollama_active" and not active.get("ok"):
+            return {
+                "ok": False,
+                "online": False,
+                "model": active.get("active_model") or "",
+                "checked": checked,
+                "active": active,
+                "via": via,
+                "message": active.get("message")
+                or "No usable active Ollama model is available.",
+            }
+
+        return {
+            "ok": True,
+            "online": True,
+            "model": active.get("active_model") or self.display_model(),
+            "checked": checked,
+            "active": active,
+            "via": via,
+        }
 
     def advertised_capabilities(self, timeout: float = 5.0) -> Dict[str, Any]:
         """Read *advertised* OpenAI model metadata, without running inference.
@@ -228,14 +413,25 @@ class Provider:
 
     def chat(self, messages: List[Dict[str, str]], max_tokens: int = 900,
              temperature: float = 0.82) -> Dict[str, Any]:
-        """One chat completion. Returns {'ok': bool, 'text'/'message', ...}."""
+        """One chat completion. Resolves the active model immediately before calling."""
+        resolved = self.resolve_model(timeout=3.0)
+        if not resolved.get("ok"):
+            return {
+                "ok": False,
+                "message": resolved.get("message")
+                or "No active Ollama model is available for writing.",
+                "loaded_models": resolved.get("loaded_models") or [],
+            }
+        model = str(resolved["model"])
         payload = {
-            "model": self.model_name(),
+            "model": model,
             "messages": messages,
             "temperature": float(temperature),
             "max_tokens": int(max_tokens),
             "stream": False,
         }
+        if self.disable_thinking():
+            payload["think"] = False
         ok, body, err = self._request(self.chat_url(), payload, self.timeout())
         if not ok:
             return {"ok": False,
@@ -248,7 +444,7 @@ class Provider:
                     "message": f"The model endpoint returned an unreadable response: {type(exc).__name__}"}
         if not content:
             return {"ok": False, "message": "The model returned an empty response."}
-        return {"ok": True, "text": content, "model_name": self.display_model()}
+        return {"ok": True, "text": content, "model_name": model}
 
 
     def stream_chat(self, messages: List[Dict[str, str]], max_tokens: int = 900,
@@ -261,13 +457,23 @@ class Provider:
         Never writes or saves author text.
         """
         token = cancellation or Cancellation()
+        resolved = self.resolve_model(timeout=3.0)
+        if not resolved.get("ok"):
+            yield {
+                "type": "error",
+                "message": resolved.get("message")
+                or "No active Ollama model is available for writing.",
+            }
+            return
         payload = {
-            "model": self.model_name(),
+            "model": str(resolved["model"]),
             "messages": messages,
             "temperature": float(temperature),
             "max_tokens": int(max_tokens),
             "stream": True,
         }
+        if self.disable_thinking():
+            payload["think"] = False
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
         if self.cfg.api_key():
             headers["Authorization"] = f"Bearer {self.cfg.api_key()}"

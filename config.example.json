@@ -11,6 +11,8 @@
     "health_path": "/health",
     "health_kind": "auto",
     "model": "local-model",
+    "selection_mode": "fixed",
+    "disable_thinking": true,
     "api_key": "",
     "timeout_seconds": 420
   },

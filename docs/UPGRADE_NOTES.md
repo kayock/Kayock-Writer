@@ -1,10 +1,11 @@
-# Kayock Writer v1.1.0 upgrade notes
+# Kayock Writer v2.0.0 upgrade notes
 
-- Adds **Editorial & Craft Handoff**: optional, on-demand model critique; suggested revisions remain separate from original writing.
-- Adds browser-only HTML, Markdown, and plain-text downloads for transfer to Craft Suite/WordCraft. The optional Craft Suite URL opens in a separate tab; no unverified API call is made.
-- Adds a non-destructive **Linux clone/install workflow**, with no privileged operation and no automatically enabled services.
-- Preserves all 10 profile definitions, story gate logic, storage schema, provider settings, and original v1.0.0 Forge functions.
-- Maintains Python 3.9+ and zero external dependencies.
-- No new authentication gates or changes to running LAN services. Existing v1 security caveat remains: only run on a trusted LAN; consider a reverse proxy with access controls for shared environments.
-- Private poems are excluded from the **public source ZIP and GitHub staging directory**. An author's private add-on ZIP is provided separately.
-- Future releases should examine original Craft Suite APIs before promising direct transfers.
+- Reports application version **2.0.0** from the centralized `app.__version__` constant (API status, CLI, and Studio status).
+- Adds **Editorial Council**, **Author Decision Board**, **Controlled Revision Workspace**, and **Full-Book Assembly** with DOCX / EPUB 3 / PDF publishing (optional JPEG cover; optional Unicode TrueType for PDF).
+- Integrates optional model routing modes:
+  - `model.selection_mode`: `fixed` (default) or `ollama_active` (use currently loaded Ollama model via `/api/ps`; never start, stop, or pull models)
+  - `model.disable_thinking`: when true, requests include `think:false` so reasoning models keep token budget for writing
+- Existing `config.json` files remain valid. Unknown older keys are ignored; new keys use the defaults above when absent.
+- Linux `deploy/install-linux.sh` continues to preserve `config.json`, private add-ons, and writing data.
+- Maintains Python 3.9+ and zero external Python dependencies.
+- No new authentication gates. Existing LAN security caveat remains: only run on a trusted LAN.

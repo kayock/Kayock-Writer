@@ -6,84 +6,60 @@
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Zero third-party Python dependencies](https://img.shields.io/badge/Python_dependencies-0-555)
-![Version 1.1.0](https://img.shields.io/badge/Release-v1.1.0-7953CF)
+![Version 2.0.0](https://img.shields.io/badge/Release-v2.0.0-7953CF)
 
-Kayock Writer brings **Poetry Forge, Short Story Forge, Novel Forge, Story Forge, and The Weaver** together in one responsive, browser-accessible workspace. Draft with a literary voice, revise selected passages, organize entire fictional universes, and save your work on storage you control.
+Kayock Writer is an **AI-Assisted Creative Writing Studio** that brings **Poetry Forge, Short Story Forge, Novel Forge, Story Forge, Editorial Council, and The Weaver** together in one responsive, browser-accessible workspace. Draft with a literary voice, revise selected passages, organize entire fictional universes, assemble books, and save your work on storage you control.
 
 It is a **standalone extraction of the writing tools from [FOXAI](https://github.com/kayock/FOXAI_)**, not a FOXAI plugin. Run it on Windows, Linux, or macOS with **Python 3.9+**, no pip installations, and a reachable **OpenAI-compatible chat model endpoint**. A model is not bundled or started for you.
 
 > [!IMPORTANT]
-> **LAN security:** v1.1.0 has **no built-in user login or HTTPS**. Anyone who can reach the Writer web port may be able to read or modify writing and settings. Use it only on a trusted LAN, or bind to \`127.0.0.1\` for local-only access. **Do not expose it directly to the public internet.**
+> **LAN security:** v2.0.0 has **no built-in user login or HTTPS**. Anyone who can reach the Writer web port may be able to read or modify writing and settings. Use it only on a trusted LAN, or bind to \`127.0.0.1\` for local-only access. **Do not expose it directly to the public internet.**
 
-## Development release-readiness verification
+## Release verification
 
-The development branch now includes a dedicated **real Chromium browser smoke
-test** in GitHub Actions. It exercises the actual Finishing Desk interface
-against a disposable sample manuscript and mock model: Council roles,
-author decisions, optional synthesis, explicitly approved revision and
-DOCX/EPUB/PDF browser downloads. Playwright and Chromium are installed
-**only in CI**; Writer's Python runtime remains dependency-free.
+`main` includes a dedicated **real Chromium browser smoke test** in GitHub
+Actions. It exercises the Finishing Desk against a disposable sample
+manuscript and mock model: Council roles, author decisions, optional
+synthesis, explicitly approved revision, and DOCX/EPUB/PDF browser
+downloads. Playwright and Chromium are installed **only in CI**; Writer's
+Python runtime remains dependency-free.
 
-This is not real-model validation or final release approval. GitHub
-also tests an **isolated Linux source installation** and **Windows/Linux
-copied-source launch**, checking that custom config/manuscripts remain
-untouched. The browser job independently renders a synthetic book PDF
-and uploads a short-lived **DOCX/EPUB/PDF visual proof bundle**.
-Actual local-model behavior, real-world upgrade/rollback, and human
-visual proofing in Word, e-readers and PDF viewers still require
-hands-on acceptance. See the
+GitHub also tests an **isolated Linux source installation** and
+**Windows/Linux copied-source launch**, checking that custom
+config/manuscripts remain untouched. Hands-on acceptance for a live local
+model, Word/e-reader/PDF visual proofing, and site-specific upgrade
+rollback still belong in the
 [Release Acceptance Checklist](docs/RELEASE_ACCEPTANCE.md)
-and [one-session Real Model Acceptance](docs/REAL_MODEL_ACCEPTANCE.md) for all
-remaining gates, with no claimed result for tests that have not run.
+and [one-session Real Model Acceptance](docs/REAL_MODEL_ACCEPTANCE.md).
 
-## Development branch preview — not yet a release
+## Kayock Writer v2.0
 
-The [open draft pull request](https://github.com/kayock/Kayock-Writer/pull/1)
-contains ongoing v1.2–v1.5 development work. **The released version
-remains v1.1.0 on `main`**; these development features are not yet
-included in the default `git clone` installation.
+**Editorial Council:** In the Finishing Desk, select up to three specialized
+reviewers (including Story Architect) and explicitly run their independent,
+sequential reviews through the already configured model. Read each report
+in its own panel, stop the run if needed, and optionally request one
+separately confirmed synthesis. No reviewer automatically starts another
+project, changes canon, edits a manuscript, or saves a draft.
 
-The development branch adds author-controlled recovery, streaming
-editorial review, approved Story Bible facts with chronology and
-relationships, safe model presets, a visual Story Forge corkboard,
-independent alternative drafts, and explicit reviewed acceptance
-as new chapter versions. Its Finishing Desk now also offers private,
-opt-in Voice DNA references, developmental/voice audit modes, and
-DOCX/EPUB publishing.
+**Author Decision Board:** Highlight individual reviewer recommendations,
+mark them Approved for consideration, Rejected, Deferred or Pending, and
+explicitly download a JSON record. These decisions do **not** apply manuscript
+edits.
 
-**New v2.0 preview — Editorial Council:** In the Finishing Desk, select
-up to three specialized reviewers and explicitly run their independent,
-sequential reviews through the already configured model. Read each
-report in its own panel, stop the run if needed, and optionally request
-one separately confirmed synthesis. No reviewer automatically starts
-another project, changes canon, edits a manuscript, or saves a draft.
-Each chosen role makes a full model call; synthesis makes one more.
+**Controlled Revision Workspace:** Load the latest verified saved Story Forge
+chapter, edit a separate proposed revision, preview its unified diff, and
+explicitly approve writing a **new canonical draft version**. Earlier saved
+versions remain untouched.
 
-**Per-role model assignments and manual decisions (v2.0 preview):**
-Authors can choose a saved Writer Model Profile independently for
-each Council reviewer and for synthesis. Model choices are scoped to
-that run and never change the active model; credentials for the
-active endpoint are not sent to a different endpoint. The separate
-Author Decision Board lets the writer highlight individual reviewer
-recommendations, mark them Approved for consideration, Rejected,
-Deferred or Pending, and explicitly download a JSON record. These
-decisions do **not** apply any manuscript edits.
+**Full-Book Assembly & Publishing:** Choose a Story Forge project and book,
+select the exact saved version of each chapter, adjust reading order, preview,
+then download **DOCX, EPUB 3, or PDF**. Optional JPEG cover art and optional
+Unicode TrueType embedding for PDF are supported. Source manuscripts are not
+changed by preview or export.
 
-**Controlled Revision Workspace (v2.0 preview):** You can load the
-latest verified saved Story Forge chapter, edit a separate proposed
-revision, preview its unified diff, and explicitly approve writing a
-**new canonical draft version**. Earlier saved versions remain
-untouched; changing the source history or proposal after preview
-invalidates approval. Council suggestions can inform your choices,
-but neither a recommendation nor a decision-board approval is
-automatically applied. No model is called during revision acceptance.
-
-**New publishing workflow under development:** Open
-**Editorial & Craft Handoff → Full-Book Assembly & Publishing**,
-choose a Story Forge project and book, select the exact saved
-version of each chapter, adjust their reading order, and preview.
-Only then can you download a verified **book DOCX, EPUB 3, or basic PDF**.
-No source manuscript file is changed by preview or export.
+**Model routing:** Settings support `fixed` model names and `ollama_active`
+selection (read Ollama `/api/ps` before generation; never start, stop, or pull
+models). Optional `disable_thinking` keeps token budget for writing content.
 
 The book publisher also supports an **optional author-selected JPEG
 cover** embedded in DOCX, EPUB and PDF. Common private JPEG metadata
@@ -101,9 +77,7 @@ EPUB for complex scripts**, and visually proof each book before publishing.
 
 These features run without new mandatory Python dependencies. Automated
 tests use mock data and run on Linux and Windows; they do not replace
-real-model, browser, Word, e-reader or visual PDF acceptance testing.
-The pull request is deliberately left in draft until that validation
-and release approval are complete.
+hands-on real-model, Word, e-reader, or visual PDF acceptance testing.
 
 [Development details and API notes](docs/STREAMING_AND_CANON.md)
 
@@ -114,10 +88,10 @@ and release approval are complete.
 | 🪶 **Poetry Forge** | Create poems with guided controls for form, rhyme, rhythm, imagery, and literary voice. Polish existing poems, revise selected lines with three alternatives, and browse versioned drafts. |
 | 📖 **Short Story Forge** | Generate or polish short fiction with story-specific guidance, chosen voices, and checks that a revision actually changes the text. |
 | 🌌 **Novel Forge** | Build universes with characters, settings, artifacts, timelines, mysteries, scenes, and notes. Manage universe files and export a story bible. |
-| 📚 **Story Forge** | Organize longer projects, plan chapters, track continuity handoffs, edit drafts, and manage manuscript prose with approval-gated saves and backup-aware editing. |
+| 📚 **Story Forge** | Organize longer projects, plan chapters, track continuity handoffs, edit drafts, and manage manuscript prose with approval-gated saves and protected version history. |
 | 🧵 **The Weaver** | Combine 2–4 source texts into fresh poetry, fiction, prose, or Twine-ready passages with source mapping and reuse warnings. |
 | 🗂️ **My Writing** | Search and revisit saved poems, stories, and version groups. |
-| ✍️ **Editorial & Craft Handoff** | Request optional critique or suggested revisions **without overwriting the original**, then download HTML, Markdown, or text for further editing. |
+| ✍️ **Editorial & Craft Handoff** | Editorial Council, Author Decision Board, Controlled Revision Workspace, full-book assembly, and DOCX / EPUB 3 / PDF publishing — without overwriting originals unless you explicitly approve a new version. |
 
 One application, one left-hand navigation tree, and an independent writing-data folder. The forges work together but **do not require the rest of FOXAI**.
 
@@ -194,7 +168,7 @@ Kayock Writer distinguishes **generation**, **suggestion**, and **approved chang
 - **Poetry / short fiction:** Create with guided prompts, polish a draft, or request alternatives for a selected passage. Saved drafts use metadata and version grouping.
 - **Novel building:** Maintain a universe's premise, cast, places, events, secrets, and scenes. Export story-bible content as **JSON, Markdown, or plain text**.
 - **Long-form Story Forge:** Use project and chapter workflows with preview-and-approval gates, continuity notes, versioned drafts, and backups before applicable edits.
-- **Editorial & Craft Handoff (v1.1.0):** Ask the current model for critique or a suggested passage. Suggestions remain separate until you manually choose to use them.
+- **Editorial & Craft Handoff (v2.0.0):** Ask the current model for critique or a suggested passage, run Editorial Council reviews, use the Author Decision Board, and approve protected revisions. Suggestions remain separate until you explicitly choose to use them.
 
 The interface is a writing workspace, not a replacement for editorial judgment: review generated material and backups before relying on them.
 
@@ -207,7 +181,7 @@ Writer can help you prepare prose or poetry for further formatting in **Craft Su
 3. Export **HTML**, **Markdown**, or **TXT**. HTML includes print-friendly styling and preserves poetry line/stanza breaks.
 4. Open your separately configured Craft Suite homepage and **import the exported file manually**.
 
-**No Craft Suite installation is required.** The optional link opens its homepage; v1.1.0 does **not** claim direct WordCraft API transfer, DOCX creation, or automatic two-way synchronization.
+**No Craft Suite installation is required.** The optional link opens its homepage; v2.0.0 does **not** claim direct WordCraft API transfer or automatic two-way synchronization. Book DOCX/EPUB/PDF downloads are created by Writer itself.
 
 [Craft Suite handoff details](docs/CRAFT_SUITE.md)
 
@@ -255,7 +229,9 @@ These checks run with Python's standard library; the workflow tests use a **bund
 \`\`\`bash
 python3 tests/verify_kayock_writer.py   # 18 self-verification checks
 python3 tests/run_tests.py              # 53 original tests
-python3 tests/test_upgrade.py           # 6 v1.1.0 upgrade tests
+python3 tests/test_upgrade.py           # upgrade compatibility tests
+python3 tests/test_ollama_active.py     # ollama_active + disable_thinking
+python3 tests/test_version_homepage.py  # v2.0.0 version + homepage metadata
 \`\`\`
 
 GitHub Actions runs these checks on **Python 3.9 and 3.12** on pushes and pull requests. See [CI results](https://github.com/kayock/Kayock-Writer/actions/workflows/tests.yml). Local test success does not itself confirm the model server, microphone, or other LAN services in your particular installation.
