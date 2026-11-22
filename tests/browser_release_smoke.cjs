@@ -64,6 +64,14 @@ async function downloadAndInspect(page, button, format, prefix) {
   const failure = await download.failure();
   assert.equal(failure, null, format + ' download failed');
   const file = fs.readFileSync(await download.path());
+  // Keep ONLY the synthetic book made by this CI-only fixture as a
+  // reviewable artifact. Never capture any private/production manuscripts.
+  const proofDirectory = path.join(resultFolder, 'release-proofs');
+  fs.mkdirSync(proofDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(proofDirectory, path.basename(download.suggestedFilename())),
+    file
+  );
   assert.ok(file.length > 400, format + ' output is unexpectedly small');
   assert.ok(file.subarray(0, prefix.length).equals(prefix),
             format + ' does not have the expected file signature');
