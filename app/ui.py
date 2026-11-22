@@ -1935,6 +1935,7 @@ async function renderFinishing(){
   await voiceDnaRefresh();
   await councilLoadModels();
   await bookPublishInit();
+  await revisionInit();
 }
 /* ========================= optional author-owned Voice DNA ========================= */
 async function voiceDnaRefresh(){
@@ -2529,6 +2530,194 @@ async function councilStream(payload,stage){
     councilState.generation=null;
     councilStateButtons();
   }
+}
+/* ===================== author-controlled revision approval ===================== */
+const revisionState={
+  initialized:false,project:'',book:'',chapter:'',sourceHash:'',
+  original:'',token:null,previewRequest:null
+};
+function revisionInvalidate(){
+  revisionState.token=null;
+  revisionState.previewRequest=null;
+  q('revisionApproval').checked=false;
+  q('revisionApproveButton').disabled=true;
+  q('revisionDiff').textContent=
+    'Proposed text or chapter selection changed. Preview the exact revision again.';
+  q('revisionDiff').className='status';
+}
+function revisionStatus(message,kind=''){
+  const element=q('revisionStatus');
+  element.textContent=message;
+  element.className='status '+kind;
+}
+async function revisionInit(){
+  if(revisionState.initialized)return;
+  revisionState.initialized=true;
+  const select=q('revisionProject');
+  const old=select.value||S.story.project||'';
+  select.replaceChildren();
+  for(const p of S.projects||[])
+    select.appendChild(new Option(p.title||p.project_id,p.project_id));
+  if((S.projects||[]).some(p=>p.project_id===old))select.value=old;
+  await revisionSelectProject();
+}
+async function revisionSelectProject(){
+  const project=q('revisionProject').value;
+  const old=q('revisionBook').value||S.story.book||'';
+  const select=q('revisionBook');
+  const found=(S.projects||[]).find(p=>p.project_id===project);
+  select.replaceChildren();
+  for(const item of (found&&found.books)||[])
+    select.appendChild(new Option(item.title||item.id,item.id));
+  if((found&&found.books||[]).some(b=>b.id===old))select.value=old;
+  await revisionOptions();
+}
+async function revisionOptions(){
+  const project=q('revisionProject').value;
+  const book=q('revisionBook').value;
+  revisionInvalidate();
+  revisionState.project='';
+  revisionState.book='';
+  revisionState.chapter='';
+  revisionState.original='';
+  q('revisionOriginal').value='';
+  q('revisionCandidate').value='';
+  const selector=q('revisionChapter');
+  selector.replaceChildren();
+  if(!project||!book){
+    revisionStatus('Choose a saved Story Forge project and book.');
+    return;
+  }
+  const response=await api('/api/writer/revision/options?project_id='+
+    encodeURIComponent(project)+'&book_id='+encodeURIComponent(book));
+  if(project!==q('revisionProject').value||book!==q('revisionBook').value)return;
+  if(!response.ok){
+    revisionStatus(response.message||'Could not list saved chapter versions.','err');
+    return;
+  }
+  const groups=response.chapters||[];
+  for(const group of groups){
+    selector.appendChild(new Option(
+      group.chapter+' · v'+group.version+' · '+group.word_count+' words',
+      group.chapter
+    ));
+  }
+  revisionStatus(groups.length?
+    'Choose a chapter, then load its latest verified saved version. No writing has been changed.':
+    'No saved draft chapters in this book.');
+}
+async function revisionLoad(){
+  const project=q('revisionProject').value;
+  const book=q('revisionBook').value;
+  const chapter=q('revisionChapter').value;
+  if(!project||!book||!chapter){
+    revisionStatus('Choose a saved chapter first.','err');return;
+  }
+  if(revisionState.project&&q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Discard your unsaved candidate text and load a saved chapter?'))return;
+  revisionInvalidate();
+  const r=await api('/api/writer/revision/load',{
+    project_id:project,book_id:book,chapter
+  });
+  if(!r.ok){revisionStatus(r.message||'Could not load saved chapter.','err');return;}
+  if(project!==q('revisionProject').value||book!==q('revisionBook').value||
+     chapter!==q('revisionChapter').value){
+    revisionStatus('Selection changed while loading. Load the chapter again.','err');
+    return;
+  }
+  revisionState.project=project;revisionState.book=book;
+  revisionState.chapter=chapter;revisionState.original=r.text;
+  revisionState.sourceHash=r.sha256;
+  q('revisionOriginal').value=r.text;
+  q('revisionCandidate').value=r.text;
+  revisionStatus('Verified '+chapter+' · saved version '+r.version+
+    '. Edit the separate proposed revision, then preview before saving.','ok');
+}
+function revisionUseFinishingText(){
+  if(!revisionState.chapter){
+    revisionStatus('Load a verified saved chapter first.','err');return;
+  }
+  const incoming=q('finishText').value;
+  if(!incoming.trim()){
+    revisionStatus('There is no Finishing Desk passage to copy.','err');return;
+  }
+  if(q('revisionCandidate').value!==revisionState.original &&
+      !confirm('Replace the unsaved proposed text with the Finishing Desk passage?'))return;
+  q('revisionCandidate').value=incoming;
+  revisionInvalidate();
+  revisionStatus('Finishing Desk text copied into the proposed revision. Nothing saved.');
+}
+function revisionRequest(){
+  return {
+    project_id:revisionState.project,
+    book_id:revisionState.book,
+    chapter:revisionState.chapter,
+    candidate:q('revisionCandidate').value
+  };
+}
+function revisionChoicesCurrent(){
+  return revisionState.project===q('revisionProject').value &&
+    revisionState.book===q('revisionBook').value &&
+    revisionState.chapter===q('revisionChapter').value;
+}
+async function revisionPreview(){
+  revisionInvalidate();
+  if(!revisionState.chapter||!revisionChoicesCurrent()){
+    revisionStatus('Load the selected chapter before previewing.','err');return;
+  }
+  const payload=revisionRequest();
+  revisionStatus('Comparing the entire candidate with the saved chapter…');
+  const r=await api('/api/writer/revision/preview',payload);
+  if(!r.ok){revisionStatus(r.message||'Revision preview failed.','err');return;}
+  if(JSON.stringify(payload)!==JSON.stringify(revisionRequest())||
+     !revisionChoicesCurrent()){
+    revisionStatus('The candidate changed during preview. Preview again.','err');
+    return;
+  }
+  revisionState.token=r.confirmation_token;
+  revisionState.previewRequest=JSON.stringify(payload);
+  q('revisionDiff').textContent=
+    'CURRENT: v'+r.current_version+' · NEXT: v'+r.expected_next_version+
+    '\nOriginal words: '+r.source_words+' · Proposed words: '+r.candidate_words+
+    '\nChanged blocks: '+r.diff_metrics.changed_blocks+
+    (r.diff_preview_truncated?
+      '\nDIFF DISPLAY LIMITED TO 400 LINES. Full candidate remains intact.':'')+
+    '\n\n'+r.diff_lines.join('\n');
+  q('revisionDiff').className='status ok';
+  revisionStatus('Read the diff. Saving is disabled until you explicitly approve.','ok');
+}
+function revisionApprovalChanged(){
+  q('revisionApproveButton').disabled=!q('revisionApproval').checked||
+    !revisionState.token||revisionState.previewRequest!==
+    JSON.stringify(revisionRequest())||!revisionChoicesCurrent();
+}
+async function revisionAccept(){
+  if(!q('revisionApproval').checked||!revisionState.token||
+     !revisionChoicesCurrent()||revisionState.previewRequest!==
+      JSON.stringify(revisionRequest())){
+    revisionInvalidate();
+    revisionStatus('The revision changed or is not approved. Preview again.','err');
+    return;
+  }
+  const payload=revisionRequest();
+  if(!confirm('SAVE this exact author-approved revision as a NEW Story Forge draft version of "'+
+      payload.chapter+'"? Earlier versions will remain. No automatic merge occurs.'))return;
+  const result=await api('/api/writer/revision/accept',{
+    ...payload,confirmation_token:revisionState.token,approved:true
+  });
+  if(!result.ok){
+    revisionInvalidate();
+    revisionStatus(result.message||'Revision acceptance failed. Preview again.','err');
+    return;
+  }
+  revisionInvalidate();
+  revisionStatus('Saved new canonical draft v'+result.canonical_version+
+    ' for '+result.chapter+'. Earlier saved versions remain unchanged.','ok');
+  revisionState.original=payload.candidate;
+  q('revisionOriginal').value=payload.candidate;
+  q('revisionCandidate').value=payload.candidate;
+  q('revisionDiff').textContent='Accepted as NEW version '+result.canonical_version+
+    '. Preview a different candidate for further changes.';
 }
 /* ===================== full-book assembly and downloads ===================== */
 const bookPublishState={
@@ -3666,6 +3855,32 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <div class="status" id="councilDecisionStatus">Decisions stay in this browser session unless you explicitly download them. No server or manuscript writes.</div>
     </details>
     <p class="small">Reports and synthesis exist only in this browser session; they are not automatically saved, applied, published or added to canon. Copy passages manually if you choose to use them. Editing the input or selected roles after review requires fresh reviews before synthesis.</p>
+  </details>
+  <details class="card wide"><summary><strong>Controlled Revision Workspace — author approval required</strong></summary>
+    <p class="small">Compare an editable proposed revision against a verified saved Story Forge chapter. You may manually incorporate any Council suggestions you choose. This workspace does not ask a model to edit or automatically apply recommendations. Preview the exact changes first; then explicitly approve appending a NEW canonical draft version. All earlier versions remain available.</p>
+    <div class="row">
+      <div><label>Story Forge project</label><select id="revisionProject" onchange="revisionSelectProject()"></select></div>
+      <div><label>Book</label><select id="revisionBook" onchange="revisionOptions()"></select></div>
+      <div class="fixed"><button class="btn" onclick="revisionOptions()">Refresh saved chapters</button></div>
+    </div>
+    <div class="row">
+      <div><label>Saved chapter</label><select id="revisionChapter" onchange="revisionInvalidate()"></select></div>
+      <div class="fixed"><button class="btn" onclick="revisionLoad()">Load latest saved chapter</button></div>
+    </div>
+    <div class="row">
+      <div><label>Original canonical draft (read-only)</label><textarea id="revisionOriginal" class="big" readonly></textarea></div>
+      <div><label>Proposed author revision (editable; not yet saved)</label>
+        <textarea id="revisionCandidate" class="big" oninput="revisionInvalidate()" maxlength="80000" placeholder="Load a chapter and edit a separate proposal."></textarea></div>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="revisionUseFinishingText()">Use Finishing Desk text as candidate</button>
+      <button class="btn primary" onclick="revisionPreview()">Preview precise changes</button>
+    </div>
+    <pre id="revisionDiff" class="status" style="white-space:pre-wrap;max-height:420px;overflow:auto">Choose and load a chapter, edit the candidate, and preview before approval.</pre>
+    <label><input id="revisionApproval" type="checkbox" onchange="revisionApprovalChanged()"> I have reviewed this exact candidate and approve saving it as a NEW draft version</label>
+    <button class="btn primary" id="revisionApproveButton" onclick="revisionAccept()" disabled>Save approved revision as NEW version</button>
+    <div id="revisionStatus" class="status">No revision loaded. Nothing has been written.</div>
+    <p class="small">Changes to the candidate, saved chapter or draft history invalidate the preview. Preview is read-only; only the final author-approved action can save a new version. No automatic approval, model calls, overwrites, or manuscript editing occurs.</p>
   </details>
   <div class="card wide"><h3>Full-Book Assembly &amp; Publishing</h3>
     <p class="small">Assemble existing saved Story Forge chapter drafts in exactly the order you choose. Pick which chapters to include and which saved version of each to publish. Preview the assembled manuscript before downloading. Original drafts and version history remain untouched.</p>
