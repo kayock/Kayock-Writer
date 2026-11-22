@@ -5,6 +5,8 @@ import base64
 import io
 import json
 import sys
+import shutil
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -163,6 +165,19 @@ class UnicodeFontTests(unittest.TestCase):
         self.assertIn(b"/ToUnicode",pdf)
         self.assertIn(b"03A9",pdf)  # ToUnicode mapping for Omega
         self.assertTrue(pdf.rstrip().endswith(b"%%EOF"))
+        # Poppler, when already present on an Actions runner, independently
+        # verifies the ToUnicode extraction, not merely the raw PDF structure.
+        if shutil.which("pdftotext"):
+            with tempfile.TemporaryDirectory() as temp:
+                output=Path(temp)/"unicode_book.pdf"
+                output.write_bytes(pdf)
+                extracted=subprocess.run(
+                    ["pdftotext", "-enc", "UTF-8", str(output), "-"],
+                    capture_output=True, text=True, timeout=20
+                )
+                self.assertEqual(extracted.returncode,0,extracted.stderr)
+                self.assertIn("Alpha Ω",extracted.stdout)
+                self.assertIn("café",extracted.stdout)
         book=sample_book(font=font)
         result=build_book_export(book,"pdf")
         self.assertTrue(result["body"].startswith(b"%PDF-"))
