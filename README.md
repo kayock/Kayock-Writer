@@ -48,6 +48,15 @@ recommendations, mark them Approved for consideration, Rejected,
 Deferred or Pending, and explicitly download a JSON record. These
 decisions do **not** apply any manuscript edits.
 
+**Controlled Revision Workspace (v2.0 preview):** You can load the
+latest verified saved Story Forge chapter, edit a separate proposed
+revision, preview its unified diff, and explicitly approve writing a
+**new canonical draft version**. Earlier saved versions remain
+untouched; changing the source history or proposal after preview
+invalidates approval. Council suggestions can inform your choices,
+but neither a recommendation nor a decision-board approval is
+automatically applied. No model is called during revision acceptance.
+
 **New publishing workflow under development:** Open
 **Editorial & Craft Handoff → Full-Book Assembly & Publishing**,
 choose a Story Forge project and book, select the exact saved
