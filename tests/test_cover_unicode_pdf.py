@@ -186,9 +186,12 @@ class UnicodeFontTests(unittest.TestCase):
                               [hex(ord(x)) for x in extracted.stdout[:30]])
                 self.assertIn("café",normalized)
                 self.assertNotIn("\ufffd",normalized)
-        book=sample_book(font=font)
+        book=sample_book(font=font,cover=decode_cover(JPEG_B64))
         result=build_book_export(book,"pdf")
         self.assertTrue(result["body"].startswith(b"%PDF-"))
+        self.assertIn(b"/Subtype /Type0",result["body"])
+        self.assertIn(b"/Subtype /Image",result["body"])
+        self.assertIn(b"/DCTDecode",result["body"])
         passage=build_export({"format":"pdf","title":"Signal \u03A9",
             "author":"A. Author","text":"We saw \u03A9 above the sea.",
             "writing_type":"prose","pdf_ttf_base64":encoded})
