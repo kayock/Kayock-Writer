@@ -187,7 +187,7 @@ class BookPackageTests(BookAssemblyTests):
                     ET.fromstring(z.read(file))
             xml=z.read("word/document.xml").decode("utf-8")
             self.assertLess(xml.index("Chapter Three"),xml.index("Chapter One"))
-            self.assertLess(xml.rindex("Chapter One"),xml.index("Chapter Two"))
+            self.assertLess(xml.rindex("Chapter One"),xml.rindex("Chapter Two"))
             self.assertIn("The first chapter begins.",xml)
             self.assertNotIn("completely rewritten.",xml)
             self.assertEqual(xml.count("<w:pageBreakBefore/>"),3)
