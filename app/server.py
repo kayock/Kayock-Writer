@@ -384,6 +384,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/model/health':
             self._guard(lambda: app.provider.health(timeout=5.0))
             return
+        if path == '/api/model/capabilities':
+            self._guard(app.provider.advertised_capabilities)
+            return
         # Poetry Forge / archive
         if path == '/api/writer/poetry/archive':
             self._guard(app.poetry.archive)
