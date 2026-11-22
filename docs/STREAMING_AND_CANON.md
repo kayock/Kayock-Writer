@@ -674,6 +674,71 @@ manager. Every action requires an explicit author click. Additional
 role-specific endpoint selection and richer approval UIs are future
 work; no assumption is made about local multi-model installations.
 
+## v2.0 — Per-role saved model assignments and Author Decision Board
+
+The Editorial Council can now assign a different **already-saved Writer
+Model Profile** to each of the four possible roles and to the optional
+synthesis role. This adds no new provider registry or background
+model manager.
+
+- All assignments default to the **current active configured model**.
+  Authors may opt into a saved profile per role from the optional
+  **Model assignments** controls in the Finishing Desk. Profiles are
+  created beforehand in Writer's existing Settings panel.
+- Each selected role runs sequentially on its selected OpenAI-compatible
+  endpoint, with that profile's own saved model ID, chat path and
+  timeout. These are **one-run, ephemeral choices**. The active model,
+  active model settings, context, configured timeouts and profile
+  records are not modified.
+- Model selection is validated **before any streamed response begins**.
+  Unknown, deleted, malformed or unselected role IDs are rejected.
+  Changing a role's saved-profile selection or the synthesis model
+  changes the source fingerprint and invalidates a stale synthesis.
+- **Credential isolation:** Writer never forwards the active
+  endpoint's API key (including an environment-supplied key) to a
+  saved profile with a different base URL. The active key can only
+  be used for the active endpoint or a saved model profile that
+  references the same exact base URL. A different provider requiring
+  authorization may return an error: this milestone does not create,
+  store or prompt for credentials to that second provider.
+- No new model is automatically downloaded, loaded or kept running.
+  The chosen endpoint must already be ready to serve requests.
+  If one role fails, subsequent roles are not called.
+- Both Council `role_start` and `role_done` events identify the
+  model used, so completed reports carry visible provenance. The
+  report does not include or display API keys.
+
+**Manual Author Decision Board:**
+- In a completed reviewer report, **highlight a specific passage**
+  and click **Add selected recommendation to decision board**. There
+  is no automatic extraction of suggestions or model-generated
+  decision grading. You may also add an author-written note.
+- Each item has an editable author note and one of four **author-only
+  review statuses**: Pending, Approved for consideration, Rejected
+  or Deferred. An approval labels a suggestion as worth considering;
+  **it is NOT authorization to edit, merge, overwrite, publish, or
+  add anything to canon**.
+- The board is in browser session memory only. If you want a durable
+  record, click **Download decision board JSON**. The exported file
+  contains just the selected recommendation snippets, statuses,
+  author notes and a fingerprint; it does **not** include the
+  original full manuscript text or entire reviewer reports.
+- Starting another Council run with an unsaved decision board
+  asks for confirmation before clearing those notes. Source or
+  model selection changes are flagged as stale, not silently
+  associated with the current manuscript.
+- No new persistence route, background save, model calls, or
+  manuscript write permission is introduced by the board.
+
+**Tests:** `tests/test_council_model_routing.py` checks two
+in-process model endpoints, individual per-role and synthesis
+routing, active configuration preservation, saved timeout reuse,
+HTTP validation, stale synthesis fingerprint rejection and both
+config-file and environment API-key isolation. Existing Council
+streaming/cancellation tests still run. Interface controls are
+covered by the browser script syntax check and static HTML
+assertions; hands-on browser acceptance is still required.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -701,6 +766,7 @@ python tests/test_model_capabilities.py
 python tests/test_model_profiles.py
 python tests/test_voice_dna.py
 python tests/test_editorial_council.py
+python tests/test_council_model_routing.py
 python tests/test_publishing.py
 python tests/test_book_publishing.py
 python tests/test_cover_unicode_pdf.py
