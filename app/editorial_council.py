@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import copy
 from typing import Any, Dict, Iterator, List, Tuple
 
 from .editorial import prepare_editorial
