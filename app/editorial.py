@@ -29,16 +29,41 @@ characters, or factual assertions. Do not imitate copyrighted passages.
 """
 
 
+
+DEVELOPMENTAL_SYSTEM = """You are a developmental literary editor reviewing
+the AUTHOR'S actual passage, not drafting new prose. Analyze structure,
+scene purpose, narrative promises and payoffs, pacing, motivation, scene
+transitions and tension. Separate observed evidence from hypotheses and
+questions for the author. Use headings: STRUCTURAL STRENGTHS, SCENE PURPOSE,
+PACING AND CAUSALITY, CHARACTER CHOICES, PRIORITIZED QUESTIONS.
+Quote only short submitted excerpts. Flag missing context instead of
+inventing story-world facts. Preserve the author's voice and decisions;
+do not rewrite, save, or publish the passage.
+"""
+
+VOICE_AUDIT_SYSTEM = """You are an author-respecting literary voice critic.
+Analyze the submitted passage's sentence rhythm, perspective, diction,
+imagery, emotional directness, and distinctive expressive choices.
+If the author explicitly supplied a Voice DNA style reference, compare
+high-level patterns without copying sample wording or plot.
+Use headings: DISTINCTIVE VOICE SIGNALS, NATURAL RHYTHM, PASSAGES TO KEEP,
+PLACES THAT FEEL FLATTENED, OPTIONAL MICRO-SUGGESTIONS.
+Cite short excerpts from the submitted draft. Never claim you know
+an author's personal style beyond the provided evidence. Do not
+rewrite the full draft, change files, or invent writing history.
+"""
+
 def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000,
-                      canon_context: str = "") -> Dict[str, Any]:
+                      canon_context: str = "",
+                      voice_context: str = "") -> Dict[str, Any]:
     """Share exact validation/prompt rules between classic and streaming reviews."""
     draft = str(payload.get('text') or '')
     mode = str(payload.get('mode') or 'review').strip().casefold()
     kind = str(payload.get('writing_type') or 'prose').strip().casefold()
     title = str(payload.get('title') or '').strip()[:200]
     direction = str(payload.get('direction') or '').strip()[:1000]
-    if mode not in ('review', 'suggestion'):
-        return {'ok': False, 'message': 'Choose review or suggestion mode.'}
+    if mode not in ('review', 'suggestion', 'developmental', 'voice_audit'):
+        return {'ok': False, 'message': 'Choose review, suggestion, developmental, or voice audit mode.'}
     if kind not in ('poem', 'short_story', 'novel', 'prose'):
         return {'ok': False, 'message': 'Unrecognized writing type.'}
     if not draft.strip():
@@ -46,9 +71,16 @@ def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000,
     if len(draft) > 80000:
         return {'ok': False, 'message': 'Passage exceeds 80,000 characters. Select a chapter or excerpt; nothing was truncated.'}
     max_tokens = max(200, int(max_tokens))
-    instruction = REVIEW_SYSTEM if mode == 'review' else SUGGEST_SYSTEM
+    instruction = {
+        'review': REVIEW_SYSTEM,
+        'suggestion': SUGGEST_SYSTEM,
+        'developmental': DEVELOPMENTAL_SYSTEM,
+        'voice_audit': VOICE_AUDIT_SYSTEM,
+    }[mode]
     if canon_context:
         instruction += '\n\n' + canon_context
+    if voice_context:
+        instruction += '\n\n' + voice_context
     messages = [
         {'role': 'system', 'content': instruction},
         {'role': 'user', 'content':
@@ -57,13 +89,17 @@ def prepare_editorial(payload: Dict[str, Any], max_tokens: int = 4000,
             'DRAFT START\n' + draft + '\nDRAFT END'},
     ]
     return {'ok': True, 'mode': mode, 'draft': draft, 'messages': messages,
-            'max_tokens': max_tokens, 'temperature': 0.35 if mode == 'review' else 0.45}
+            'max_tokens': max_tokens, 'temperature': 0.45 if mode == 'suggestion' else 0.35}
 
 
 def editorial_review(provider: Provider, payload: Dict[str, Any],
                      max_tokens: int = 4000,
-                     canon_context: str = '') -> Dict[str, Any]:
-    prepared = prepare_editorial(payload, max_tokens, canon_context=canon_context)
+                     canon_context: str = '',
+                     voice_context: str = '') -> Dict[str, Any]:
+    prepared = prepare_editorial(
+        payload, max_tokens, canon_context=canon_context,
+        voice_context=voice_context
+    )
     if not prepared['ok']:
         return prepared
     response = provider.chat(prepared['messages'],
