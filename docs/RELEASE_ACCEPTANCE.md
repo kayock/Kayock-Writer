@@ -16,8 +16,30 @@
 | Canonical draft integrity | Old versions preserved; stale previews refused |
 | Book package integrity | Valid DOCX/EPUB ZIP and direct PDF content |
 | Credential isolation | Cross-endpoint API key not forwarded |
+| Disposable Linux installer | Repeated temp-dir installs preserve existing config/manuscripts; symlink target refused |
+| Windows and Linux copied-source launch | Temporary copy starts localhost-only without real models or existing user data |
+| Independent PDF reader | Poppler renders synthetic PDF pages and extracts expected author text |
+| Synthetic proof bundle | CI uploads example DOCX/EPUB/PDF, PDF page PNGs and extracted text for human inspection |
 
 The new browser-smoke GitHub Actions job exercises the **actual browser UI and HTTP server**. It launches a temporary sample Story Forge project and a deterministic **mock model**. The job clicks through independent Council reviews, an author-marked decision, optional synthesis, a verified revision preview and acceptance, and real DOCX/EPUB/PDF browser downloads. It confirms that edits after preview disable export and checks for uncaught JavaScript errors.
+
+The final CI job also runs the disposable staging tests in
+tests/test_install_staging.py. It verifies the real optional Linux
+source-copy helper in a temporary installation and separately launches
+an isolated copied-source Writer server on Windows and Linux. **There
+is no native Windows installer**, and this does not prove in-place
+upgrades of a real installation.
+
+On a successful browser-smoke job, the CI runner uses Poppler to render
+the sample book PDF to page PNGs and independently extract its text.
+The job uploads a **seven-day synthetic publishing proof artifact**
+named **kayock-writer-synthetic-publishing-proofs** with the DOCX,
+EPUB, PDF, rendered PDF pages, and extracted text. No user manuscripts
+or licensed author-supplied font files are included.
+
+For an optional **single-real-model smoke test** and the manual proof
+procedure, see [Real Model Acceptance](REAL_MODEL_ACCEPTANCE.md).
+It has not been executed against author machines or endpoints.
 
 The browser job runs only on CI; Playwright and Chromium are **development testing tools** and are not part of the installed Kayock Writer runtime. No production configs, actual user writing, private voice profiles, online endpoints or model credentials are loaded. A failed run may upload a screenshot containing only synthetic fixture text.
 
@@ -61,7 +83,7 @@ For each gate, record a date, Pass / Fail / Not tested, and the actual result. *
 - The Council uses a sequential series of per-role model requests. Multiple slow models can create long total runtimes; no model automatically starts.
 - “Approved for consideration” on the Decision Board never changes manuscript files. An additional, explicit author-controlled revision approval is needed to append a version.
 - DOCX/EPUB/PDF tests validate structure and downloads but not professional page layout or reader compatibility. A user-selected Unicode TrueType PDF has only simple left-to-right rendering; complex-script shaping, fallback and color emoji are not supported.
-- Release readiness remains blocked on human acceptance, especially real-model, actual document viewer and installation/rollback tests.
+- Release readiness remains blocked on human acceptance, especially real-model, actual document viewer and **production** installation/rollback tests. Passing disposable installation staging is not a claim that a running installation was upgraded or rolled back.
 
 ## Release decision record
 
