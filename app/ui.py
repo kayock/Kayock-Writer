@@ -131,6 +131,18 @@ summary{cursor:pointer;color:var(--accent3)}
   #layout{min-height:calc(100vh - 100px)}
   main{padding:14px}
 }
+
+.scene-lanes{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;align-items:start}
+.scene-lane{min-height:170px;border:1px solid var(--line);background:var(--bg2);border-radius:12px;padding:10px}
+.scene-lane>h4{margin:0 0 10px;color:var(--accent)}
+.scene-note{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:8px;cursor:grab}
+.scene-note strong{display:block;overflow-wrap:anywhere}
+.scene-note .small{white-space:pre-line;overflow-wrap:anywhere}
+.scene-note .row{gap:5px;margin-top:8px}
+.scene-note button{font-size:.78em;padding:4px 8px}
+.scene-lane.drag-hover{outline:2px solid var(--accent3);outline-offset:-3px}
+@media(max-width:1030px){.scene-lanes{grid-template-columns:repeat(2,minmax(220px,1fr))}}
+@media(max-width:610px){.scene-lanes{grid-template-columns:minmax(0,1fr)}}
 """
 
 _JS = r"""
@@ -166,7 +178,7 @@ function show(page){
     novelforge:()=>renderNovelForge(), weaver:()=>renderWeaver(),
     storyoverview:renderStoryOverview, storycreate:renderStoryCreate,
     storychapters:renderStoryChapters, storyeditor:renderStoryEditor,
-    storydrafts:renderStoryDrafts, storyprose:renderStoryProse,
+    storydrafts:renderStoryDrafts, sceneboard:renderSceneBoard, storyprose:renderStoryProse,
     mywriting:()=>renderArchive('mywriting'), finishing:renderFinishing, settings:renderSettings,
   };
   if(renderers[page])renderers[page]();
@@ -1627,6 +1639,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <button class="nav" data-page="storychapters" onclick="show('storychapters')">Chapter Planner &amp; Cards</button>
     <button class="nav" data-page="storyeditor" onclick="show('storyeditor')">Chapter Editor</button>
     <button class="nav" data-page="storydrafts" onclick="show('storydrafts')">Draft Workspace</button>
+    <button class="nav" data-page="sceneboard" onclick="show('sceneboard')">Visual Scene Corkboard</button>
     <button class="nav" data-page="storyprose" onclick="show('storyprose')">Prose Workspace</button>
   </div>
 
@@ -2043,6 +2056,39 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <button class="btn primary" onclick="storyEditorApply()">Apply edit (approve)</button>
     </div>
     <div id="storyEditorStatus" class="status">Load a chapter to begin.</div>
+  </div>
+</section>
+
+<section class="page" id="pg-sceneboard">
+  <div class="hero"><h1>Visual Scene Corkboard</h1>
+    <p>Plan scenes in lanes, arrange them by drag-and-drop or keyboard-friendly controls, and leave saved chapter drafts untouched.</p></div>
+  <div class="card wide">
+    <div class="row">
+      <div><label>Story Forge project</label><select id="sceneBoardProject" onchange="sceneBoardUpdateBooks();sceneBoardRefresh()"></select></div>
+      <div><label>Book</label><select id="sceneBoardBook" onchange="sceneBoardClearEditor();sceneBoardRefresh()"></select></div>
+      <div class="fixed"><button class="btn" onclick="sceneBoardRefresh()">Refresh board</button></div>
+    </div>
+    <div id="sceneBoardStatus" class="status">Choose an existing project and book. This is a separate planning board.</div>
+  </div>
+  <div class="card wide">
+    <h3 id="sceneBoardEditLabel">New scene card</h3>
+    <div class="row">
+      <div><label>Scene title</label><input id="sceneBoardTitle" type="text" maxlength="160"></div>
+      <div><label>Chapter label</label><input id="sceneBoardChapter" type="text" maxlength="160" placeholder="Chapter 3"></div>
+    </div>
+    <div class="row">
+      <div><label>Point of view</label><input id="sceneBoardPov" type="text" maxlength="120"></div>
+      <div><label>Location</label><input id="sceneBoardLocation" type="text" maxlength="160"></div>
+    </div>
+    <label>Scene summary</label><textarea id="sceneBoardSummary" maxlength="4000" placeholder="Goal, conflict, turn, and outcome"></textarea>
+    <label>Beats / story notes</label><textarea id="sceneBoardBeats" maxlength="6000"></textarea>
+    <div class="row"><button class="btn primary" id="sceneBoardSave" onclick="sceneBoardSave()">Add scene</button>
+      <button class="btn" onclick="sceneBoardClearEditor()">Cancel editing</button></div>
+    <p class="small">Cards are manually authored. No AI calls, manuscript edits, automatic publishing, or irreversible deletion.</p>
+  </div>
+  <div class="card wide"><h3>Scene lanes</h3>
+    <p class="small">Drag a card to a lane or another card, or use Move, ↑, and ↓. Parked cards remain saved.</p>
+    <div id="sceneBoardLanes" class="scene-lanes"></div>
   </div>
 </section>
 
