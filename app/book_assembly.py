@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .storage import contained, slug
+from .cover_art import decode_cover
 
 MAX_CHAPTERS = 160
 MAX_CHARS = 800_000
@@ -118,6 +119,7 @@ class BookAssembler:
             raise ValueError("A book title up to 200 characters is required.")
         if not isinstance(author, str) or len(author) > 160:
             raise ValueError("Author must be text up to 160 characters.")
+        cover = decode_cover(payload.get("cover_jpeg_base64"))
         index = self._entries(history)
         used = set()
         chapters: List[Dict[str, Any]] = []
@@ -172,11 +174,12 @@ class BookAssembler:
             "project": project, "book": payload["book_id"],
             "title": title, "author": author,
             "manifest_sha256": _hash(history_raw), "ordered_selections": identity,
+            "cover_sha256": cover["sha256"] if cover else "",
         }, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         token = _hash(canonical)
         return {
             "title": title, "author": author, "writing_type": "novel",
-            "chapters": chapters, "token": token,
+            "chapters": chapters, "token": token, "cover": cover,
             "project_id": project, "book_id": payload["book_id"],
             "book_title": str(book.get("title") or payload["book_id"]),
         }
@@ -190,6 +193,12 @@ class BookAssembler:
                 "confirmation_token": book["token"],
                 "chapter_count": len(book["chapters"]),
                 "total_words": sum(c["words"] for c in book["chapters"]),
+                "cover_present": book["cover"] is not None,
+                "cover_size": book["cover"]["size"] if book["cover"] else 0,
+                "cover_dimensions": (
+                    [book["cover"]["width"], book["cover"]["height"]]
+                    if book["cover"] else None
+                ),
                 "chapters": [
                     {"title": c["title"], "filename": c["filename"],
                      "version": c["version"], "words": c["words"],
