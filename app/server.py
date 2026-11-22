@@ -38,6 +38,7 @@ from .storyforge import StoryForge
 from .scene_board import SceneBoard
 from .series_outline import SeriesOutline
 from .draft_branches import DraftBranches
+from .revision_workspace import RevisionWorkspace
 from .weaver import Weaver
 
 MAX_BODY_BYTES = 9 * 1024 * 1024  # matches FOXAI mission JSON limit
@@ -76,6 +77,7 @@ class App:
         self.scene_board = SceneBoard(self.store, self.storyforge)
         self.series_outline = self.scene_board.outline
         self.draft_branches = DraftBranches(self.store, self.storyforge)
+        self.revision_workspace = RevisionWorkspace(self.storyforge, self.draft_branches)
 
     def status(self) -> Dict[str, Any]:
         health = self.provider.health(timeout=3.0)
@@ -612,6 +614,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/writer/story/scene_board':
             self._guard(app.scene_board.read, q1('project_id'), q1('book_id'))
             return
+        if path == '/api/writer/revision/options':
+            self._guard(app.author_draft_action, app.revision_workspace.options,
+                        q1('project_id'), q1('book_id'))
+            return
         if path == '/api/writer/story/draft_workspace':
             self._guard(app.storyforge.draft_workspace,
                         {'project_id': q1('project_id'), 'book_id': q1('book_id'),
@@ -636,6 +642,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         app = self.app
 
+        if path == '/api/writer/revision/load':
+            self._guard(app.author_draft_action, app.revision_workspace.load, d)
+            return
+        if path == '/api/writer/revision/preview':
+            self._guard(app.author_draft_action, app.revision_workspace.preview, d)
+            return
+        if path == '/api/writer/revision/accept':
+            self._guard(app.author_draft_action, app.revision_workspace.accept, d)
+            return
         if path == '/api/writer/publishing/book/preview':
             self._guard(app.author_draft_action, app.book_assembler.preview, d)
             return
