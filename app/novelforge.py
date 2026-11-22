@@ -129,7 +129,6 @@ class NovelForge:
             f"## Mysteries / Unresolved Threads\n\n" + "\n".join(f"- {x}" for x in data['mysteries']) + "\n\n"
             f"## Scenes\n\n" + "\n".join(f"- {x}" for x in data.get('scenes', [])) + "\n\n"
             f"## Notes\n\n{data['notes']}\n",
-            encoding='utf-8',
         )
         return {'ok': True, 'message': f'Saved universe: {name}', 'universe': data,
                 'name': p.stem, 'path': str(p), 'markdown': str(md)}
