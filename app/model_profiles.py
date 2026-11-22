@@ -76,6 +76,21 @@ class ModelProfiles:
         if (not isinstance(data, dict) or data.get("schema") != _SCHEMA
                 or not isinstance(data.get("profiles"), list)):
             raise ValueError("Unsupported model profile format; refusing to overwrite.")
+        ids, names = set(), set()
+        if len(data["profiles"]) > 100:
+            raise ValueError("Saved model profile list is out of bounds; refusing to overwrite.")
+        for entry in data["profiles"]:
+            if not isinstance(entry, dict) or set(entry) != {"id", "name", "settings"}:
+                raise ValueError("Saved model profile data is incompatible; refusing to overwrite.")
+            pid, name = entry["id"], entry["name"]
+            if (not isinstance(pid, str) or len(pid) != 32
+                    or any(c not in "0123456789abcdef" for c in pid)
+                    or not isinstance(name, str) or not name.strip()
+                    or len(name) > 80 or pid in ids or name.casefold() in names):
+                raise ValueError("Saved model profile identifiers are invalid; refusing to overwrite.")
+            validate_settings(entry["settings"])
+            ids.add(pid)
+            names.add(name.casefold())
         return data
 
     def list(self) -> Dict[str, Any]:
