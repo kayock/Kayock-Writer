@@ -185,7 +185,10 @@ background restore, cloud copy, automatic recovery or model calls occur.
 
 This version deliberately restores only **existing Novel Forge universes**;
 a deleted universe or an unrelated Story Forge project is not automatically
-recreated. Older backups larger than the explicit 32 MiB safety preview
+recreated. The web API serializes universe writes with restore operations,
+and tests reject stale restore previews even when another save races with
+recovery. Existing damaged JSON is refused by save/rename/duplicate, never
+silently treated as an empty universe. Older backups larger than the explicit 32 MiB safety preview
 limit need manual recovery. It does not restore the separate approved-canon
 review record (which remains stored independently).
 
