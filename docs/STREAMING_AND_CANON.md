@@ -97,9 +97,52 @@ when proposing, accepting, or rejecting a fact. Rename operations relocate
 the canon records; deletion of the parent universe **retains** separate canon
 records for recovery and reports that fact in the response.
 
-The canon records are **not yet injected into model prompts**. Automated
-extraction, source verification, timeline query, evidence-aware context
-assembly, and contradiction detection are future milestones.
+## Approved-only context and continuity (next v1.3 slice)
+
+Novel Forge now offers a **Canon Retrieval & Continuity Workshop**:
+
+- **Retrieve approved facts** accepts a query/excerpt and deterministically
+  ranks author-approved canon by subject, claim and cited source. Each result
+  includes its fact ID, evidence, chapter/world time and narrative order.
+  Pending and rejected proposals are never used.
+- **Check possible continuity tensions** compares a pasted excerpt with
+  approved facts and flags only explicit opposite statements about named
+  characters (currently **alive/dead** and **scar side**). Every warning
+  includes the approved claim, draft excerpt and original evidence. It may
+  be explained by time, point of view or character development; it is a
+  **review suggestion**, never a proven contradiction. No text is changed.
+- **Use approved Story Bible references in Editorial** is an author-controlled
+  checkbox in the Finishing Desk, **off by default**. Select a saved universe
+  and a maximum **number of facts** (1–200, initial value 12). Both classic
+  and streaming editorial reviews use the same ranked approved references,
+  in a clearly marked reference block. No other Forge uses them implicitly.
+
+Preview endpoints:
+- POST `/api/novelforge/canon/context` with
+  `{"universe":"Saved_Universe","query":"Elena enters the room","limit":12}`.
+  Returns selected approved facts, relevance scores, sources, a copyable
+  context string, and an *advisory* estimated token count.
+- POST `/api/novelforge/canon/continuity` with
+  `{"universe":"Saved_Universe","text":"Elena is dead."}`.
+  Returns only read-only potential-tension warnings with evidence.
+- The existing POST `/api/writer/editorial/review` and
+  `/api/writer/editorial/stream` accept optional
+  `"use_canon":true`, `"universe":"Saved_Universe"`, and
+  `"canon_limit":12`. Missing or false `use_canon` preserves existing
+  behavior exactly.
+
+**Limit 12 refers to retrieved fact records, not model context size.**
+The configured model, maximum output tokens, timeout and context settings
+are unchanged. Authors can retrieve up to 200 records deliberately.
+A nonempty query with no approved matches yields an empty context block,
+not unrelated filler. No embeddings, model loading or extra dependency
+is required for this stage.
+
+Model-generated fact extraction, cross-chapter causal/knowledge timelines,
+semantic contradiction detection, automatic source verification, and
+general drafting across other Forges are **not** claimed complete. In
+particular, the current rule-based linter cannot prove that a novel has no
+continuity issues.
 
 ## Safety and testing
 
@@ -115,6 +158,7 @@ python tests/run_tests.py
 python tests/test_upgrade.py
 python tests/test_foundation.py
 python tests/test_canon_api.py
+python tests/test_context_engine.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
 python tests/check_ui_js.py
