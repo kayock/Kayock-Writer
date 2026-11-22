@@ -43,6 +43,23 @@ class CanonStore:
             raise ValueError("Unsupported or damaged canon data; refusing to overwrite")
         return data
 
+    def prepare_relocation(self, old_universe: str, new_universe: str) -> None:
+        """Preflight a rename so existing canon records cannot be overwritten."""
+        source, target = self._root(old_universe), self._root(new_universe)
+        if source != target and source.exists() and target.exists():
+            raise ValueError("The target universe already has canon records.")
+
+    def relocate(self, old_universe: str, new_universe: str) -> None:
+        self.prepare_relocation(old_universe, new_universe)
+        source, target = self._root(old_universe), self._root(new_universe)
+        if source == target or not source.exists():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
+        data = self._load(new_universe)
+        data["universe"] = new_universe
+        jwrite(self._path(new_universe), data)
+
     def list_facts(self, universe: str, state: str | None = None) -> Dict[str, Any]:
         if state is not None and state not in STATES:
             raise ValueError("Invalid state")
