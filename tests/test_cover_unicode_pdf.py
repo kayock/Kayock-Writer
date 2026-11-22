@@ -136,7 +136,7 @@ class UnicodeFontTests(unittest.TestCase):
         encoded=base64.b64encode(raw).decode("ascii")
         font=decode_font(encoded)
         self.assertGreater(font["size"],500)
-        face=TrueTypeFont= TrueTypeFont(font["raw"])
+        face = TrueTypeFont(font["raw"])
         self.assertNotEqual(face.glyph(ord("A")),0)
         self.assertNotEqual(face.glyph(ord("\u03A9")),0)
         manuscript={"title":"Alpha \u03A9","author":"A. Author",
