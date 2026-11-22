@@ -3870,7 +3870,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div class="row">
       <div><label>Original canonical draft (read-only)</label><textarea id="revisionOriginal" class="big" readonly></textarea></div>
       <div><label>Proposed author revision (editable; not yet saved)</label>
-        <textarea id="revisionCandidate" class="big" oninput="revisionInvalidate()" maxlength="80000" placeholder="Load a chapter and edit a separate proposal."></textarea></div>
+        <textarea id="revisionCandidate" class="big" oninput="revisionInvalidate()" placeholder="Load a chapter and edit a separate proposal. Revision previews refuse content over 80,000 characters rather than trimming it."></textarea></div>
     </div>
     <div class="row">
       <button class="btn" onclick="revisionUseFinishingText()">Use Finishing Desk text as candidate</button>
