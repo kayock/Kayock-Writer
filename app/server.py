@@ -30,6 +30,7 @@ from .poetry import PoetryForge
 from .provider import Cancellation, Provider
 from .storage import Store
 from .storyforge import StoryForge
+from .scene_board import SceneBoard
 from .weaver import Weaver
 
 MAX_BODY_BYTES = 9 * 1024 * 1024  # matches FOXAI mission JSON limit
@@ -62,6 +63,7 @@ class App:
             require_approval_phrase=cfg.require_approval_phrase,
             default_author=cfg.default_author,
         )
+        self.scene_board = SceneBoard(self.store, self.storyforge)
 
     def status(self) -> Dict[str, Any]:
         health = self.provider.health(timeout=3.0)
@@ -489,6 +491,9 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(app.storyforge.chapter_editor_preview,
                         {'project_id': q1('project_id'), 'filename': q1('filename')})
             return
+        if path == '/api/writer/story/scene_board':
+            self._guard(app.scene_board.read, q1('project_id'), q1('book_id'))
+            return
         if path == '/api/writer/story/draft_workspace':
             self._guard(app.storyforge.draft_workspace,
                         {'project_id': q1('project_id'), 'book_id': q1('book_id'),
@@ -591,6 +596,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/canon/knowledge':
             self._guard(app.canon_knowledge, d)
+            return
+        if path == '/api/writer/story/scene_board/change':
+            self._guard(app.scene_board.change, d)
             return
         # Story Forge actions
         story_routes = {
