@@ -504,6 +504,87 @@ async function renderNovelForge(){
     :'<div class="status">No universes yet. Give the forge a name and a premise below, then Save Universe.</div>';
   updateNovelCounts();
   renderCanon();
+  renderBackupOptions();
+}
+let backupPreviewState=null;
+function clearBackupPreview(){
+  backupPreviewState=null;
+  q('nfBackupRestore').disabled=true;
+  q('nfBackupPreview').textContent='No restore preview. Your saved universe is unchanged.';
+}
+async function renderBackupOptions(){
+  const target=q('nfBackupSelect');
+  if(!target)return;
+  clearBackupPreview();
+  if(!S.novel.active){
+    target.innerHTML='<option value="">Load or save a universe first…</option>';
+    return;
+  }
+  const result=await api('/api/novelforge/backups?name='+encodeURIComponent(S.novel.active));
+  if(!result.ok){
+    target.innerHTML='<option value="">Backups unavailable</option>';
+    q('nfBackupPreview').textContent=result.message||'Could not list backups.';
+    return;
+  }
+  target.innerHTML='<option value="">Select a previous version…</option>'+
+    (result.backups||[]).map(b=>
+      '<option value="'+esc(b.id)+'">'+esc(b.modified)+' · '+esc(b.recorded_premise||'Untitled version')+'</option>'
+    ).join('');
+  if(!(result.backups||[]).length){
+    q('nfBackupPreview').textContent='No previous saves yet. A backup will appear after your next overwrite.';
+  }
+}
+async function previewUniverseBackup(){
+  const selected=q('nfBackupSelect').value;
+  clearBackupPreview();
+  if(!S.novel.active||!selected){
+    q('nfBackupPreview').textContent='Select a saved universe and a backup first.';
+    return;
+  }
+  const d=await api('/api/novelforge/backups/preview',{
+    universe:S.novel.active,backup_id:selected
+  });
+  if(!d.ok){
+    q('nfBackupPreview').textContent=d.message||'Backup preview failed.';
+    return;
+  }
+  const current=d.current||{},snapshot=d.snapshot||{};
+  const counts=x=>Object.entries(x.counts||{}).map(([key,n])=>key+': '+n).join(' · ');
+  q('nfBackupPreview').innerHTML='<div class="card"><strong>Current saved version</strong>'+
+    '<p>'+esc(current.title||'')+' · '+esc(current.modified||'')+'</p>'+
+    '<p>'+esc(current.premise||'')+'</p><div class="small">'+esc(counts(current))+'</div></div>'+
+    '<div class="card"><strong>Backup that would replace it</strong>'+
+    '<p>'+esc(snapshot.title||'')+' · '+esc(snapshot.modified||'')+'</p>'+
+    '<p>'+esc(snapshot.premise||'')+'</p><div class="small">'+esc(counts(snapshot))+'</div></div>'+
+    '<p class="small">Preview only. Existing character, timeline and unknown JSON fields are restored from this exact snapshot. A fresh backup is created before restoration.</p>';
+  backupPreviewState={universe:d.universe,backupId:d.backup_id,token:d.confirmation_token};
+  q('nfBackupRestore').disabled=false;
+}
+async function restoreUniverseBackup(){
+  const state=backupPreviewState;
+  if(!state||!S.novel.active||state.universe!==S.novel.active||
+     q('nfBackupSelect').value!==state.backupId){
+    clearBackupPreview();
+    toast('Preview the selected backup again before restoring.','err');
+    return;
+  }
+  if(!confirm('Restore this previous universe version? The CURRENT saved version will be backed up first. Unsaved editor text is not included in that backup.')){
+    return;
+  }
+  q('nfBackupRestore').disabled=true;
+  const d=await api('/api/novelforge/backups/restore',{
+    universe:state.universe,backup_id:state.backupId,confirmation_token:state.token
+  });
+  if(!d.ok){
+    q('nfBackupPreview').textContent=d.message||'Restore rejected; no changes claimed.';
+    backupPreviewState=null;
+    toast('Restore not completed. Refresh and preview again.','err');
+    return;
+  }
+  backupPreviewState=null;
+  toast('Previous version restored. Your former saved version is backed up.','ok');
+  await loadUniverse(state.universe);
+  renderNovelForge();
 }
 async function renderCanon(){
   const area=q('nfCanonList');
@@ -614,7 +695,7 @@ async function loadUniverse(name){
   }
   q('nfNotes').value=d.notes||'';
   q('nfStatus').textContent=`Loaded universe: ${d.universe||name}`;
-  updateNovelCounts();renderCanon();toast('Universe loaded.','ok');
+  updateNovelCounts();renderCanon();renderBackupOptions();toast('Universe loaded.','ok');
 }
 async function saveUniverse(){
   const payload={
@@ -1567,6 +1648,16 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <span id="nfCounts"></span>
     </div>
     <div id="nfStatus" class="status">No universe loaded.</div>
+  </div>
+  <div class="card wide"><h3>Novel Forge Backup Recovery</h3>
+    <p class="small">Choose a previously saved universe backup, inspect the differences, then explicitly confirm the restore. A new backup of your current version is made first. Nothing restores automatically.</p>
+    <div class="row">
+      <div><label>Saved backup</label><select id="nfBackupSelect" onchange="clearBackupPreview()"><option value="">Load a saved universe first…</option></select></div>
+      <div class="fixed"><button class="btn" onclick="renderBackupOptions()">Refresh backups</button>
+        <button class="btn" onclick="previewUniverseBackup()">Preview selected backup</button></div>
+    </div>
+    <div id="nfBackupPreview" class="status">No restore preview. Existing writing is unchanged.</div>
+    <button id="nfBackupRestore" class="btn danger" onclick="restoreUniverseBackup()" disabled>Confirm restore of previewed version</button>
   </div>
   <div class="card wide"><h3>Living Story Bible — Canon Review</h3>
     <p class="small">Facts stay proposed until approved. Only approved facts qualify as canon. No manuscript or existing universe lists are changed here.</p>
