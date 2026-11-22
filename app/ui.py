@@ -599,11 +599,13 @@ async function renameUniverse(name,title){
   const new_title=prompt('Rename universe to:',title||name);
   if(!new_title)return;
   const d=await api('/api/novelforge/rename',{name,new_title});
+  if(d.ok && S.novel.active===name)S.novel.active=d.name;
   toast(d.message||'Done.',d.ok?'ok':'err');renderNovelForge();
 }
 async function deleteUniverse(name,title){
-  if(!confirm(`Delete the universe "${title||name}"? Its JSON and Markdown mirror are removed.`))return;
+  if(!confirm(`Delete the universe "${title||name}"? Its JSON and Markdown mirror are removed. Separate canon records are retained for recovery.`))return;
   const d=await api('/api/novelforge/delete',{name});
+  if(d.ok && S.novel.active===name)S.novel.active=null;
   toast(d.message||'Done.',d.ok?'ok':'err');renderNovelForge();
 }
 /* codex card helpers: structured input -> list line */
