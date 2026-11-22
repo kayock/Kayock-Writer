@@ -40,6 +40,7 @@ jobs:
       - run: python tests/test_voice_dna.py
       - run: python tests/test_editorial_council.py
       - run: python tests/test_council_model_routing.py
+      - run: python tests/test_revision_workspace.py
       - run: python tests/test_publishing.py
       - run: python tests/test_book_publishing.py
       - run: python tests/test_cover_unicode_pdf.py
