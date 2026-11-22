@@ -136,6 +136,30 @@ class App:
             narrative_order=str(d.get('narrative_order') or ''),
         )
 
+    def rename_universe_with_canon(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        old_name = self._existing_universe(d.get('name', ''))
+        new_title = str(d.get('new_title') or '').strip()
+        if not new_title:
+            raise ValueError('New universe title required.')
+        target = self.novelforge.novel_path(new_title)
+        if target is None:
+            raise ValueError('Invalid universe title.')
+        if target.stem != old_name and target.exists():
+            raise ValueError('A universe with that title already exists.')
+        self.canon.prepare_relocation(old_name, target.stem)
+        result = self.novelforge.rename_universe(d)
+        if result.get('ok'):
+            self.canon.relocate(old_name, target.stem)
+        return result
+
+    def delete_universe_preserving_canon(self, name: str) -> Dict[str, Any]:
+        key = self._existing_universe(name)
+        result = self.novelforge.delete_universe(name)
+        if result.get('ok') and self.canon._root(key).exists():
+            result['canon_retained'] = True
+            result['message'] += ' Separate canon review records were retained for recovery.'
+        return result
+
     def canon_review(self, d: Dict[str, Any]) -> Dict[str, Any]:
         name = self._existing_universe(d.get('universe', ''))
         fact_id = str(d.get('fact_id') or '')
@@ -417,10 +441,10 @@ class Handler(BaseHTTPRequestHandler):
             self._guard(app.novelforge.duplicate_universe, d)
             return
         if path == '/api/novelforge/rename':
-            self._guard(app.novelforge.rename_universe, d)
+            self._guard(app.rename_universe_with_canon, d)
             return
         if path == '/api/novelforge/delete':
-            self._guard(app.novelforge.delete_universe, d.get('name', ''))
+            self._guard(app.delete_universe_preserving_canon, d.get('name', ''))
             return
         if path == '/api/novelforge/export':
             self._guard(app.novelforge.export_story_bible, d)
