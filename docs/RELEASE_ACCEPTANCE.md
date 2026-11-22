@@ -55,7 +55,7 @@ The script starts and stops its **own temporary local fixture server**. Never po
 
 ## Mandatory human acceptance gates (not yet verified)
 
-For each gate, record a date, Pass / Fail / Not tested, and the actual result. **All are currently Not tested.** Passing CI alone does not complete these gates.
+For each gate, record a date, Pass / Fail / Not tested, and the actual result. The isolated Linux acceptance findings reported below are **not a production upgrade or release approval**. Unlisted gates remain Not tested. Passing CI alone does not complete these gates.
 
 | Gate | What to verify |
 | --- | --- |
@@ -77,6 +77,42 @@ For each gate, record a date, Pass / Fail / Not tested, and the actual result. *
 | Final README / installation | Instructions match the final merge commit |
 | Explicit owner release approval | No merge or tag before author approval |
 
+## Isolated Linux candidate acceptance — reported November 22, 2026
+
+The owner shared a Cursor-generated acceptance report from a **separate Linux
+development-branch installation**. These are reported local test results, not
+checks independently executed in this GitHub Actions run. The report states
+that the previous existing Writer installation was left unchanged, with no
+new systemd service, startup task, firewall rule, API key or timeout change.
+
+| Check | Reported status | Evidence and remaining qualification |
+| --- | --- | --- |
+| Isolated Linux installation and startup | PASS | Separate development copy returned HTTP 200; no existing installation overwritten |
+| Story Forge, chapter history and recovery | PASS | Synthetic project; original chapter version hashes survived v001/v002/v003; recovery suite passed |
+| Editorial Council UI | PASS, **mock only** | Exactly one selected role; streamed mock response is not evidence of real-model accuracy |
+| Real local model inference | **NOT TESTED** | Selected localhost endpoint refused connections; running Ollama listed no loaded model; no model was started or retried |
+| Controlled revision | PASS | Explicit preview/approval appended v003 while earlier versions remained unchanged |
+| Author Decision Board | PASS | Manual approve-for-consideration exported JSON; no manuscript write |
+| DOCX | PASS | Synthetic two-chapter file visually inspected in LibreOffice |
+| EPUB 3 | Structural PASS; **e-reader NOT TESTED** | Correct navigation and Cyrillic text; no actual reader inspection |
+| PDF | PASS, restricted edition | Western-text PDF visually inspected; Cyrillic appropriately refused by basic PDF font |
+| JPEG cover and optional Unicode TrueType PDF in actual browser | **NOT TESTED** | Automated cover/Unicode regression tests passed, but real browser options not exercised |
+| Windows installation and existing-user upgrade/rollback | **NOT TESTED** | Temporary CI copied-source launch is not a Windows installer or production upgrade |
+| Narrow-screen UI | Issue reported | Appbar blocked navigation clicks until widening the browser; development-branch responsive fix and Chromium regression added, **local retest still pending** |
+| Saved chapter version menu after acceptance | Issue reported | Menu showed v002 after v003 save until refresh; development-branch immediate-label fix and regression added, **local retest still pending** |
+
+Local test environment reportedly ran 26 Python test modules (220 tests),
+18 application self-checks and the isolated Chromium fixture successfully.
+Python 3.14.4 emitted ResourceWarnings when handling expected HTTP errors,
+without test failures. No real-model test was performed.
+
+**Outstanding release gates:** one bounded real-model request, actual EPUB
+reader inspection, browser verification of cover/font, Windows install if
+required for distribution, upgrade/rollback, and explicit owner approval.
+The development application may still display the prior released
+`1.1.0` version string until versioning is finalized; do not label
+the draft as a released v2.0 build.
+
 ## Known limitations
 
 - CI's browser integration is **real Chromium UI testing with an artificial model**, not an evaluation of real AI response quality, local model loading, performance or endpoint connectivity.
@@ -90,7 +126,7 @@ For each gate, record a date, Pass / Fail / Not tested, and the actual result. *
 - Development PR: https://github.com/kayock/Kayock-Writer/pull/1
 - Exact candidate commit: record after all checks
 - Final Actions run: record after all checks
-- Manual test result: NOT TESTED
+- Manual test result: PARTIAL isolated Linux acceptance reported; real model and release gates still open
 - Owner approval to merge: NOT GIVEN
 - Release decision: HOLD DRAFT
 
