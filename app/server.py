@@ -7,6 +7,8 @@ configurable. JSON API, single-page UI at `/`, health at `/api/status`.
 from __future__ import annotations
 
 import json
+import threading
+import uuid
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,11 +16,11 @@ from typing import Any, Dict, Optional, Tuple
 
 from . import __version__, APP_NAME, voices
 from .config import Config, save_config
-from .editorial import editorial_review
+from .editorial import editorial_review, prepare_editorial
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .poetry import PoetryForge
-from .provider import Provider
+from .provider import Cancellation, Provider
 from .storage import Store
 from .storyforge import StoryForge
 from .weaver import Weaver
@@ -33,6 +35,9 @@ class App:
         self.cfg = cfg
         self.store = Store(cfg.data_dir())
         self.provider = Provider(cfg)
+        self._generation_lock = threading.Lock()
+        self._active_generations = {}
+
         voices.apply_private_voice_pack(cfg.data_dir())
         self.poetry = PoetryForge(
             self.store, self.provider,
@@ -107,6 +112,22 @@ class App:
         return editorial_review(self.provider, d,
                                 max_tokens=self.cfg.get('writing.editorial_max_tokens', 4000))
 
+    def register_generation(self, generation_id: str, token: Cancellation) -> None:
+        with self._generation_lock:
+            self._active_generations[generation_id] = token
+
+    def forget_generation(self, generation_id: str) -> None:
+        with self._generation_lock:
+            self._active_generations.pop(generation_id, None)
+
+    def cancel_generation(self, generation_id: str) -> Dict[str, Any]:
+        with self._generation_lock:
+            token = self._active_generations.get(generation_id)
+        if token is None:
+            return {'ok': False, 'message': 'Generation not found or already finished.'}
+        token.cancel()
+        return {'ok': True, 'cancelled': True, 'generation_id': generation_id}
+
     def test_model_settings(self) -> Dict[str, Any]:
         health = self.provider.health(timeout=5.0)
         if health.get('ok'):
@@ -171,6 +192,65 @@ class Handler(BaseHTTPRequestHandler):
                 'ok': False,
                 'message': f'Server error: {type(exc).__name__}: {exc}',
             }, code=500)
+
+    def _stream_event(self, event_type: str, payload: Dict[str, Any]) -> None:
+        """Write and flush a single SSE event; caller handles disconnected clients."""
+        frame = (f"event: {event_type}\\n"
+                 f"data: {json.dumps(payload, ensure_ascii=False)}\\n\\n")
+        self.wfile.write(frame.encode("utf-8"))
+        self.wfile.flush()
+
+    def _editorial_stream(self, payload: Dict[str, Any]) -> None:
+        """On-demand, read-only editorial streaming; never saves a manuscript."""
+        prepared = prepare_editorial(
+            payload, max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000))
+        if not prepared['ok']:
+            self.json_response(prepared, code=400)
+            return
+        token = Cancellation()
+        generation_id = uuid.uuid4().hex
+        self.app.register_generation(generation_id, token)
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache, no-transform')
+            self.send_header('Connection', 'close')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self._stream_event('start', {'generation_id': generation_id, 'ok': True})
+            received = []
+            for event in self.app.provider.stream_chat(
+                    prepared['messages'], max_tokens=prepared['max_tokens'],
+                    temperature=prepared['temperature'], cancellation=token):
+                kind = event.get('type')
+                if kind == 'token':
+                    received.append(event['text'])
+                    self._stream_event('token', {'text': event['text']})
+                elif kind == 'done':
+                    text = ''.join(received)
+                    if not text.strip():
+                        self._stream_event('error', {'message': 'Model returned an empty response.'})
+                    elif prepared['mode'] == 'suggestion' and text.strip() == prepared['draft'].strip():
+                        self._stream_event('error', {'message': 'No changes suggested; original is unchanged.'})
+                    else:
+                        self._stream_event('done', {
+                            'ok': True, 'saved': False, 'source_unchanged': True,
+                            'message': 'Review complete. Original writing unchanged.'
+                        })
+                elif kind == 'cancelled':
+                    self._stream_event('cancelled', {
+                        'ok': True, 'saved': False, 'message': 'Generation stopped; partial suggestion not saved.'
+                    })
+                elif kind == 'error':
+                    self._stream_event('error', {'ok': False,
+                                                 'message': event.get('message', 'Streaming failed.')})
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            token.cancel()
+        finally:
+            self.app.forget_generation(generation_id)
+            token.cancel()
 
     # -- routes ---------------------------------------------------------------
     def do_GET(self):
@@ -261,6 +341,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         app = self.app
 
+        if path == '/api/writer/editorial/stream':
+            self._editorial_stream(d)
+            return
+        if path.startswith('/api/generation/') and path.endswith('/cancel'):
+            generation_id = path[len('/api/generation/'):-len('/cancel')].strip('/')
+            if not generation_id or '/' in generation_id:
+                self.json_response({'ok': False, 'message': 'Invalid generation ID'}, code=400)
+            else:
+                self._guard(app.cancel_generation, generation_id)
+            return
         # Poetry Forge / Short Story Forge
         if path == '/api/writer/poetry/create':
             self._guard(app.poetry.create, d)
