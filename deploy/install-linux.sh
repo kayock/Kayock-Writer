@@ -9,7 +9,12 @@ PYTHON="${PYTHON:-python3}"
 "$PYTHON" - "$SRC" "$DST" <<'PYCODE'
 import os, pathlib, shutil, sys
 src=pathlib.Path(sys.argv[1]).resolve()
-dst=pathlib.Path(sys.argv[2]).expanduser().resolve()
+requested=pathlib.Path(sys.argv[2]).expanduser().absolute()
+# Check the path the author actually specified BEFORE resolving symlinks.
+# Otherwise resolve() hides a symlink destination and the guard never runs.
+if requested.is_symlink():
+    raise SystemExit('Refusing to install to a symlink destination.')
+dst=requested.resolve()
 if src == dst:
     print('Already at installation directory; nothing to copy.')
     raise SystemExit(0)
