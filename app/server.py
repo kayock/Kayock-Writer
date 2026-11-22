@@ -20,6 +20,7 @@ from .canon import CanonStore
 from .context import preview as preview_canon
 from .continuity import check as check_continuity
 from .editorial import editorial_review, prepare_editorial
+from .editorial_council import ROLES, MAX_ROLES, prepare_council, council_events
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .recovery import UniverseRecovery
@@ -441,6 +442,53 @@ class Handler(BaseHTTPRequestHandler):
             self.app.forget_generation(generation_id)
             token.cancel()
 
+    def _council_stream(self, payload: Dict[str, Any]) -> None:
+        """One author-triggered, cancellable read-only Council run."""
+        try:
+            plan = prepare_council(
+                payload,
+                max_tokens=self.app.cfg.get('writing.editorial_max_tokens', 4000),
+                canon_context=self.app.editorial_canon_context(payload),
+                voice_context=self.app.editorial_voice_context(payload),
+            )
+        except (ValueError, TypeError) as exc:
+            self.json_response({'ok': False, 'message': str(exc)}, code=400)
+            return
+        token = Cancellation()
+        generation_id = uuid.uuid4().hex
+        self.app.register_generation(generation_id, token)
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache, no-transform')
+            self.send_header('Connection', 'close')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self._stream_event('start', {
+                'ok': True, 'generation_id': generation_id,
+                'stage': plan['stage'], 'roles': plan['roles'],
+                'call_count': plan['call_count'],
+                'source_fingerprint': plan['source_fingerprint'],
+                'saved': False
+            })
+            for kind, data in council_events(self.app.provider, plan, token):
+                self._stream_event(kind, data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            token.cancel()
+        except Exception as exc:
+            try:
+                self._stream_event('error', {
+                    'ok': False, 'message':
+                    f'Council streaming failed: {type(exc).__name__}: {exc}'
+                })
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+        finally:
+            self.app.forget_generation(generation_id)
+            token.cancel()
+
     # -- routes ---------------------------------------------------------------
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -467,6 +515,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/model/health':
             self._guard(lambda: app.provider.health(timeout=5.0))
+            return
+        if path == '/api/writer/council/roles':
+            self.json_response({
+                'ok': True,
+                'roles': [
+                    {'id': role, 'label': spec['label']}
+                    for role, spec in ROLES.items()
+                ],
+                'max_roles': MAX_ROLES,
+                'automatic_synthesis': False,
+                'stored': False,
+                'model': app.provider.display_model(),
+                'message': (
+                    'Choose 1–3 roles; each sequential role makes one explicit '
+                    'model call. A separate synthesis is available on request. '
+                    'No manuscript changes are applied.'
+                ),
+            })
             return
         if path == '/api/model/capabilities':
             self._guard(app.provider.advertised_capabilities)
@@ -603,6 +669,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response({'ok': False, 'message': str(exc)}, code=400)
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            return
+        if path == '/api/writer/council/stream':
+            self._council_stream(d)
             return
         if path == '/api/writer/editorial/stream':
             self._editorial_stream(d)
