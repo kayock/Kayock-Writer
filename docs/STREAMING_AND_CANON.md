@@ -144,6 +144,20 @@ general drafting across other Forges are **not** claimed complete. In
 particular, the current rule-based linter cannot prove that a novel has no
 continuity issues.
 
+## Passive model capability inspection (v1.2 incremental)
+
+In Settings, **Inspect advertised capabilities** requests the configured
+endpoint's `GET /v1/models` metadata **without running inference**.
+The result lists model IDs and reports only explicitly declared context
+window, tool calling, vision and streaming capabilities, when available.
+Absent data appears as `null` (unknown), not as unsupported. This is
+read-only; it does not save profiles, alter endpoints, reduce context/timeout,
+start models, or make any inference request.
+
+The associated `GET /api/model/capabilities` endpoint returns the same
+diagnostics. Capability probes and saved routing profiles are separate
+future work; no support is inferred from model names or guessed hardware.
+
 ## Safety and testing
 
 No model downloads, services, authentication gates, provider changes, timeout
@@ -159,6 +173,7 @@ python tests/test_upgrade.py
 python tests/test_foundation.py
 python tests/test_canon_api.py
 python tests/test_context_engine.py
+python tests/test_model_capabilities.py
 python tests/test_streaming.py
 python tests/verify_kayock_writer.py
 python tests/check_ui_js.py
