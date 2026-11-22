@@ -37,6 +37,15 @@ def _safe_candidate(value: Any) -> str:
             "Remove leading/trailing whitespace, NULs and carriage returns "
             "from the candidate before preview. No characters are silently changed."
         )
+    if value.splitlines()[0].lstrip().startswith("#"):
+        # StoryForge._draft_body currently treats a leading Markdown heading
+        # as generated front matter. Do not accept text that its existing
+        # reader would remove on the next load, invalidating source hashes.
+        raise ValueError(
+            "A leading Markdown heading is not supported by the existing "
+            "Story Forge draft reader. Move the heading into the chapter "
+            "metadata before saving; nothing was altered."
+        )
     return value
 
 
