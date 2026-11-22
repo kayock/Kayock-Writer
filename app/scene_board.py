@@ -14,18 +14,23 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .storage import Store, contained, jwrite, now, slug
+from .series_outline import SeriesOutline
+from .draft_branches import DraftBranches
 
 SCHEMA = "kayock.writer.scene_board.v1"
 LANES = ("ideas", "outlined", "drafting", "revising", "ready", "parked")
-FIELDS = ("title", "chapter", "summary", "pov", "location", "beats")
+FIELDS = ("title", "chapter", "summary", "pov", "location", "beats", "act_id", "draft_filename")
 LIMITS = {"title": 160, "chapter": 160, "summary": 4000,
-          "pov": 120, "location": 160, "beats": 6000}
+          "pov": 120, "location": 160, "beats": 6000,
+          "act_id": 32, "draft_filename": 200}
 
 
 class SceneBoard:
     def __init__(self, store: Store, storyforge):
         self.store, self.storyforge = store, storyforge
         self._lock = threading.RLock()
+        self.outline = SeriesOutline(store, storyforge)
+        self.branches = DraftBranches(store, storyforge)
 
     def _scope(self, project_id: str, book_id: str):
         if not isinstance(project_id, str) or not project_id.strip():
@@ -79,8 +84,9 @@ class SceneBoard:
                     or card.get("status") not in LANES):
                 raise ValueError("Scene board card data is damaged; refusing to overwrite.")
             for key, maximum in LIMITS.items():
-                if (not isinstance(card.get(key), str)
-                        or len(card[key]) > maximum):
+                # Older scene boards predate the act/draft reference fields.
+                value = card.get(key, "") if key in ("act_id", "draft_filename") else card.get(key)
+                if not isinstance(value, str) or len(value) > maximum:
                     raise ValueError("Scene board text field is damaged; refusing to overwrite.")
             ids.add(card["id"])
         return data, self._revision(raw)
@@ -89,9 +95,32 @@ class SceneBoard:
         with self._lock:
             project, book, path = self._scope(project_id, book_id)
             data, rev = self._load(project, book, path)
+            for card in data["cards"]:
+                card.setdefault("act_id", "")
+                card.setdefault("draft_filename", "")
+            # The board is annotated with verified links, but does not load
+            # manuscript prose or alter any linked document.
+            act_details = self.outline.read(project)["outline"]["acts"]
+            names = {act["id"]: act["title"] for act in act_details
+                     if act["book_id"] == book}
+            for card in data["cards"]:
+                card["act_title"] = names.get(card["act_id"], "")
+                card["draft_valid"] = False
+                if card["draft_filename"]:
+                    try:
+                        self.branches.verify_source(project, book,
+                                                    card["draft_filename"],
+                                                    card.get("chapter") or "")
+                        card["draft_valid"] = True
+                    except ValueError:
+                        pass
             return {"ok": True, "board": data, "revision": rev,
-                    "lanes": list(LANES), "read_only": True,
-                    "note": "This separate planning board never edits chapter drafts or manifests."}
+                    "lanes": list(LANES), "acts": [
+                        {"id": act["id"], "title": act["title"]}
+                        for act in act_details if act["book_id"] == book
+                    ],
+                    "read_only": True,
+                    "note": "Links are references only; scene board changes never edit linked chapter drafts."}
 
     @staticmethod
     def _clean(fields: Any, *, require_title: bool) -> Dict[str, str]:
@@ -105,6 +134,16 @@ class SceneBoard:
         if require_title and not cleaned.get("title"):
             raise ValueError("Give the scene card a title.")
         return cleaned
+
+    def _validate_links(self, project, book, chapter, fields):
+        if "act_id" in fields and fields["act_id"]:
+            acts = self.outline.read(project)["outline"]["acts"]
+            if not any(a["id"] == fields["act_id"] and a["book_id"] == book
+                       for a in acts):
+                raise ValueError("Act does not belong to this book's series outline.")
+        if "draft_filename" in fields and fields["draft_filename"]:
+            self.branches.verify_source(project, book,
+                                        fields["draft_filename"], chapter)
 
     def change(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Accept explicit add/update/move/park; never delete a card."""
@@ -128,6 +167,7 @@ class SceneBoard:
                 if len(cards) >= 2000:
                     raise ValueError("Scene board reached its 2,000-card planning limit.")
                 fields = self._clean(payload.get("fields"), require_title=True)
+                self._validate_links(project, book, fields.get("chapter", ""), fields)
                 status = payload.get("status", "ideas")
                 if status not in LANES:
                     raise ValueError("Unknown scene lane.")
@@ -139,6 +179,13 @@ class SceneBoard:
                 fields = self._clean(payload.get("fields"), require_title=False)
                 if "title" in fields and not fields["title"]:
                     raise ValueError("Scene title cannot be empty.")
+                # Revalidate when a chapter or draft link changes; otherwise a
+                # chapter rename could silently point to the wrong draft.
+                next_chapter = fields.get("chapter", card["chapter"])
+                next_links = dict(fields)
+                if "chapter" in fields and "draft_filename" not in fields:
+                    next_links["draft_filename"] = card.get("draft_filename", "")
+                self._validate_links(project, book, next_chapter, next_links)
                 card.update(fields)
                 card["modified"] = now()
             elif action in ("move", "park"):
