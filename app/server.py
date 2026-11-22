@@ -23,6 +23,7 @@ from .editorial import editorial_review, prepare_editorial
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
 from .recovery import UniverseRecovery
+from .model_profiles import ModelProfiles
 from .timeline import chronology, character_knowledge
 from .poetry import PoetryForge
 from .provider import Cancellation, Provider
@@ -53,6 +54,7 @@ class App:
         self.weaver = Weaver(self.store, self.provider, default_author=cfg.default_author)
         self.novelforge = NovelForge(self.store)
         self.recovery = UniverseRecovery(self.store, self.novelforge)
+        self.model_profiles = ModelProfiles(self.store)
         self.canon = CanonStore(self.store)
         self.storyforge = StoryForge(
             self.store,
@@ -424,6 +426,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/model/capabilities':
             self._guard(app.provider.advertised_capabilities)
             return
+        if path == '/api/model/profiles':
+            self._guard(app.model_profiles.list)
+            return
         # Poetry Forge / archive
         if path == '/api/writer/poetry/archive':
             self._guard(app.poetry.archive)
@@ -603,6 +608,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/config/model/test':
             self._guard(app.test_model_settings)
+            return
+        if path == '/api/model/profiles/save':
+            self._guard(app.model_profiles.save, d.get('name'), d.get('settings'))
+            return
+        if path == '/api/model/profiles/delete':
+            self._guard(app.model_profiles.delete, d.get('profile_id'))
             return
         self.json_response({'ok': False, 'message': f'Unknown route: {path}'}, code=404)
 
