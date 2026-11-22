@@ -29,6 +29,23 @@ def lines_to_list(value):
         return [str(x).strip() for x in value if str(x).strip()]
     return [x.strip() for x in str(value or '').splitlines() if x.strip()]
 
+def render_universe_markdown(data: Dict[str, Any]) -> str:
+    """Canonical Markdown mirror, shared by saves and recovery."""
+    name = str(data.get('universe') or data.get('file_name') or 'Untitled Universe')
+    return (
+            f"# {name}\n\n"
+        f"Modified: {data['modified']}\n\n"
+        f"## Premise\n\n{data['premise']}\n\n"
+        f"## Characters\n\n" + "\n".join(f"- {x}" for x in data['characters']) + "\n\n"
+        f"## Locations\n\n" + "\n".join(f"- {x}" for x in data['locations']) + "\n\n"
+        f"## Artifacts\n\n" + "\n".join(f"- {x}" for x in data['artifacts']) + "\n\n"
+        f"## Timeline\n\n" + "\n".join(f"- {x}" for x in data['timeline']) + "\n\n"
+        f"## Mysteries / Unresolved Threads\n\n" + "\n".join(f"- {x}" for x in data['mysteries']) + "\n\n"
+        f"## Scenes\n\n" + "\n".join(f"- {x}" for x in data.get('scenes', [])) + "\n\n"
+        f"## Notes\n\n{data['notes']}\n",
+    )
+
+
 
 class NovelForge:
     def __init__(self, store: Store):
@@ -118,18 +135,7 @@ class NovelForge:
         md = self.novel_md_path(name)
         if md.exists():
             self.store.backup_file(md, kind='universe_markdown')
-        atomic_write_text(md,
-            f"# {name}\n\n"
-            f"Modified: {data['modified']}\n\n"
-            f"## Premise\n\n{data['premise']}\n\n"
-            f"## Characters\n\n" + "\n".join(f"- {x}" for x in data['characters']) + "\n\n"
-            f"## Locations\n\n" + "\n".join(f"- {x}" for x in data['locations']) + "\n\n"
-            f"## Artifacts\n\n" + "\n".join(f"- {x}" for x in data['artifacts']) + "\n\n"
-            f"## Timeline\n\n" + "\n".join(f"- {x}" for x in data['timeline']) + "\n\n"
-            f"## Mysteries / Unresolved Threads\n\n" + "\n".join(f"- {x}" for x in data['mysteries']) + "\n\n"
-            f"## Scenes\n\n" + "\n".join(f"- {x}" for x in data.get('scenes', [])) + "\n\n"
-            f"## Notes\n\n{data['notes']}\n",
-        )
+        atomic_write_text(md, render_universe_markdown(data))
         return {'ok': True, 'message': f'Saved universe: {name}', 'universe': data,
                 'name': p.stem, 'path': str(p), 'markdown': str(md)}
 
