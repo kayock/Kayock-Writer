@@ -1932,6 +1932,72 @@ async function renderFinishing(){
     universes.map(u=>'<option value="'+esc(u.name)+'">'+esc(u.universe)+'</option>').join('');
   if(universes.some(u=>u.name===selected))selector.value=selected;
   else if(S.novel.active && universes.some(u=>u.name===S.novel.active))selector.value=S.novel.active;
+  await voiceDnaRefresh();
+}
+/* ========================= optional author-owned Voice DNA ========================= */
+async function voiceDnaRefresh(){
+  const select=q('finishVoiceDnaSelect');
+  const previouslySelected=select.value;
+  const result=await api('/api/writer/voice_dna');
+  select.replaceChildren();
+  select.appendChild(new Option('Choose author-owned style guide…',''));
+  if(!result.ok){
+    q('finishVoiceDnaStatus').textContent=result.message||'Voice DNA library unavailable.';
+    return;
+  }
+  for(const p of result.profiles||[])
+    select.appendChild(new Option(p.name+' · '+p.trait_count+' traits · '+p.sample_count+' excerpt(s)',p.id));
+  if((result.profiles||[]).some(p=>p.id===previouslySelected))select.value=previouslySelected;
+  q('finishVoiceDnaStatus').textContent=(result.profiles||[]).length+
+    ' private guide(s). Nothing is sent to a model unless you enable it for a review.';
+}
+function voiceDnaLines(id){
+  return q(id).value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+}
+async function voiceDnaCreate(){
+  const name=q('dnaName').value.trim();
+  if(!name){q('finishVoiceDnaStatus').textContent='Name the profile first.';return;}
+  const sample=q('dnaSample').value.trim();
+  if(sample&&!confirm('Store this excerpt inside the private Voice DNA library on this installation? You can use a style guide without saving any sample text.'))return;
+  const profile={
+    name,author:q('dnaAuthor').value.trim(),
+    traits:voiceDnaLines('dnaTraits'),
+    preserve:voiceDnaLines('dnaPreserve'),
+    avoid:voiceDnaLines('dnaAvoid'),
+    samples:sample?[sample]:[]
+  };
+  const r=await api('/api/writer/voice_dna/create',{profile});
+  q('finishVoiceDnaStatus').textContent=r.message||'Could not save style guide.';
+  q('finishVoiceDnaStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok){
+    await voiceDnaRefresh();
+    q('finishVoiceDnaSelect').value=r.profile_id;
+    q('dnaName').value='';
+    q('dnaTraits').value='';
+    q('dnaPreserve').value='';
+    q('dnaAvoid').value='';
+    q('dnaSample').value='';
+  }
+}
+async function voiceDnaInspect(){
+  const id=q('finishVoiceDnaSelect').value;
+  if(!id){q('finishVoiceDnaPreview').value='Choose a saved guide.';return;}
+  const r=await api('/api/writer/voice_dna/read?id='+encodeURIComponent(id));
+  q('finishVoiceDnaPreview').value=r.ok?JSON.stringify(r.profile,null,2):
+    (r.message||'Could not inspect guide.');
+}
+async function voiceDnaDelete(){
+  const id=q('finishVoiceDnaSelect').value;
+  if(!id){q('finishVoiceDnaStatus').textContent='Choose a guide first.';return;}
+  if(!confirm('Remove this Voice DNA guide from the active library? A local backup is kept.'))return;
+  const r=await api('/api/writer/voice_dna/delete',{id});
+  q('finishVoiceDnaStatus').textContent=r.message||'Delete failed.';
+  q('finishVoiceDnaStatus').className='status '+(r.ok?'ok':'err');
+  if(r.ok){
+    q('finishVoiceDnaPreview').value='';
+    q('finishUseVoiceDna').checked=false;
+    await voiceDnaRefresh();
+  }
 }
 function finishingImport(source){
   const ids={
@@ -1961,6 +2027,10 @@ function editorialPayload(){
     payload.use_canon=true;
     payload.universe=q('finishCanonUniverse').value;
     payload.canon_limit=Number(q('finishCanonLimit').value);
+  }
+  if(q('finishUseVoiceDna').checked){
+    payload.use_voice_dna=true;
+    payload.voice_dna_id=q('finishVoiceDnaSelect').value;
   }
   return payload;
 }
@@ -2055,6 +2125,45 @@ async function finishingReviewClassic(){
     if(d.ok){q('finishResult').value=d.text||'';
       q('finishStatus').textContent+=' Original text remains untouched.';}
   }finally{editorialBusy=false;}
+}
+async function finishingExportPackage(format){
+  const text=q('finishText').value;
+  if(!text.trim()){
+    toast('Add or import writing into the Finishing Desk first.','err');
+    return;
+  }
+  const payload={
+    title:q('finishTitle').value,
+    author:q('finishAuthor').value,
+    writing_type:q('finishType').value,
+    text,format
+  };
+  q('finishPublishingStatus').textContent='Building a '+format.toUpperCase()+' file locally…';
+  try{
+    const response=await fetch('/api/writer/publishing/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!response.ok){
+      let error;
+      try{error=await response.json();}catch(e){}
+      throw new Error(error&&error.message||'Export failed: HTTP '+response.status);
+    }
+    const blob=await response.blob();
+    const match=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    const filename=match?match[1]:'Kayock_Writing.'+format;
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;link.download=filename;
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    q('finishPublishingStatus').textContent=filename+' downloaded. No manuscript file was saved or overwritten.';
+    q('finishPublishingStatus').className='status ok';
+  }catch(e){
+    q('finishPublishingStatus').textContent=String(e.message||e);
+    q('finishPublishingStatus').className='status err';
+  }
 }
 function finishingExport(format){
   const text=q('finishText').value;
@@ -2764,6 +2873,7 @@ _HTML = r"""<!doctype html><html lang="en"><head>
   <div class="card wide"><h3>Working passage (unsaved)</h3>
     <div class="row">
       <div><label>Title</label><input id="finishTitle" type="text" value="Untitled"></div>
+      <div><label>Author for exports (optional)</label><input id="finishAuthor" type="text" maxlength="160" placeholder="Author name"></div>
       <div><label>Type</label><select id="finishType"><option value="poem">Poem</option><option value="short_story">Short story</option><option value="novel">Novel chapter</option><option value="prose" selected>Prose</option></select></div>
     </div>
     <label>Import from an existing work area</label>
@@ -2782,8 +2892,33 @@ _HTML = r"""<!doctype html><html lang="en"><head>
         <div><label>Maximum relevant facts (not the model context window)</label><input id="finishCanonLimit" type="number" min="1" max="200" value="12"></div>
       </div>
     </details>
+    <details><summary>Optional Voice DNA — own your editorial voice</summary>
+      <p class="small">Create author-owned style guides with writing traits and constraints. Samples are optional; if you save one, it stays in a local private profile file. Guides are OFF by default. Explicitly enabling a guide sends its reference text, including any saved samples, to your configured model endpoint for that one review.</p>
+      <label><input id="finishUseVoiceDna" type="checkbox"> Include selected Voice DNA reference in this review</label>
+      <div class="row">
+        <div><label>Saved Voice DNA guides</label><select id="finishVoiceDnaSelect"><option value="">Choose author-owned style guide…</option></select></div>
+        <div class="fixed"><button class="btn" onclick="voiceDnaInspect()">Inspect selected guide</button>
+          <button class="btn" onclick="voiceDnaDelete()">Delete guide</button></div>
+      </div>
+      <textarea id="finishVoiceDnaPreview" readonly placeholder="Inspection shows only the guide you select."></textarea>
+      <details><summary>Create a personal Voice DNA guide</summary>
+        <div class="row">
+          <div><label>Profile name</label><input id="dnaName" maxlength="100" placeholder="My narrative voice"></div>
+          <div><label>Author</label><input id="dnaAuthor" maxlength="160"></div>
+        </div>
+        <label>Distinctive traits (one per line)</label><textarea id="dnaTraits" placeholder="First-person intimacy…"></textarea>
+        <label>Choices to preserve (one per line)</label><textarea id="dnaPreserve" placeholder="Keep deliberately abrupt sentences…"></textarea>
+        <label>What the editor should avoid (one per line)</label><textarea id="dnaAvoid" placeholder="Do not flatten colloquial dialogue…"></textarea>
+        <label>Optional author-owned excerpt (max 2,000 characters)</label>
+        <textarea id="dnaSample" maxlength="2000" placeholder="Leave blank to save style guidance without a writing sample."></textarea>
+        <button class="btn" onclick="voiceDnaCreate()">Save local Voice DNA guide</button>
+      </details>
+      <div id="finishVoiceDnaStatus" class="status">A guide has no effect until explicitly included in a review.</div>
+    </details>
     <div class="row"><div><label>Editorial mode</label><select id="finishMode">
       <option value="review">Critique: actionable notes only</option>
+      <option value="developmental">Developmental editor: structure, pacing and motivation</option>
+      <option value="voice_audit">Voice audit: protect distinctive style</option>
       <option value="suggestion">Optional revised passage (never auto-apply)</option></select></div>
       <div><label>Direction / areas of concern</label><input id="finishDirection" type="text" placeholder="Keep my voice; focus on pacing…"></div>
       <div class="fixed"><button class="btn primary" onclick="finishingReview()">Stream review</button>
@@ -2794,10 +2929,14 @@ _HTML = r"""<!doctype html><html lang="en"><head>
   </div>
   <div class="card wide"><h3>Craft Suite handoff</h3>
     <p class="small">Download a manuscript file and import it into WordCraft or another editor. There is no assumed Craft Suite import API.</p>
-    <button class="btn primary" onclick="finishingExport('html')">Download print-style HTML</button>
+    <button class="btn primary" onclick="finishingExportPackage('docx')">Download DOCX</button>
+    <button class="btn" onclick="finishingExportPackage('epub')">Download EPUB 3</button>
+    <button class="btn" onclick="finishingExport('html')">Download print-style HTML</button>
     <button class="btn" onclick="finishingExport('md')">Download Markdown</button>
     <button class="btn" onclick="finishingExport('txt')">Download plain text</button>
     <button class="btn" onclick="finishingOpenCraft()">Open Craft Suite (configured URL)</button>
+    <div id="finishPublishingStatus" class="status">Files are generated on request from the Finishing Desk passage. They are not saved into your manuscript folders.</div>
+    <p class="small">DOCX and EPUB are basic single-document editions; print-to-PDF remains available through downloaded HTML. Advanced pagination, illustrations, tables of contents and full-book assembly remain future milestones.</p>
   </div>
 </section>
 
