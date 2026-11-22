@@ -503,6 +503,60 @@ async function renderNovelForge(){
       </table></div><div class="small" style="margin-top:6px">Folder: ${esc(d.folder||'')}</div>`
     :'<div class="status">No universes yet. Give the forge a name and a premise below, then Save Universe.</div>';
   updateNovelCounts();
+  renderCanon();
+}
+async function renderCanon(){
+  const area=q('nfCanonList');
+  if(!area)return;
+  if(!S.novel.active){
+    area.textContent='Load or save a universe first. No canon changes occur automatically.';
+    return;
+  }
+  const d=await api('/api/novelforge/canon?name='+encodeURIComponent(S.novel.active));
+  if(!d.ok){area.textContent=d.message||'Could not load canon.';return;}
+  const facts=d.facts||[];
+  if(!facts.length){
+    area.textContent='No canon facts yet. Propose a fact with a source passage below.';
+    return;
+  }
+  const counts=['proposed','approved','rejected']
+    .map(state=>'<span class="chip">'+state+': '+facts.filter(f=>f.state===state).length+'</span>').join(' ');
+  area.innerHTML=counts+facts.map(f=>{
+    const evidence=(f.evidence||[]).map(e=>'<div class="small">'+esc(e.source)+': “'+esc(e.quote)+'”</div>').join('');
+    const action=f.state==='proposed'
+      ?'<div class="row"><button class="btn primary" onclick="reviewCanonFact(\''+f.id+'\',\'approved\')">Approve</button> '+
+       '<button class="btn" onclick="reviewCanonFact(\''+f.id+'\',\'rejected\')">Reject</button></div>'
+      :'';
+    return '<div class="card" style="margin-top:10px"><strong>'+esc(f.kind)+': '+esc(f.subject)+'</strong> '+
+      '<span class="chip">'+esc(f.state)+'</span><p>'+esc(f.claim)+'</p>'+
+      (f.chapter?'<div class="small">Chapter: '+esc(f.chapter)+'</div>':'')+
+      (f.world_time?'<div class="small">World time: '+esc(f.world_time)+'</div>':'')+
+      evidence+action+'</div>';
+  }).join('');
+}
+async function proposeCanonFact(){
+  if(!S.novel.active){toast('Save or load a universe before proposing canon.','err');return;}
+  const payload={
+    universe:S.novel.active, kind:q('nfCanonKind').value,
+    subject:q('nfCanonSubject').value,claim:q('nfCanonClaim').value,
+    source:q('nfCanonSource').value,quote:q('nfCanonQuote').value,
+    chapter:q('nfCanonChapter').value,world_time:q('nfCanonWorldTime').value,
+    narrative_order:q('nfCanonNarrative').value,
+  };
+  const d=await api('/api/novelforge/canon/propose',payload);
+  toast(d.message||(d.ok?'Fact proposed for review.':'Proposal rejected.'),d.ok?'ok':'err');
+  if(d.ok){
+    ['nfCanonSubject','nfCanonClaim','nfCanonSource','nfCanonQuote'].forEach(id=>q(id).value='');
+    renderCanon();
+  }
+}
+async function reviewCanonFact(factId,decision){
+  if(!S.novel.active || !['approved','rejected'].includes(decision))return;
+  if(!confirm((decision==='approved'?'Approve':'Reject')+' this proposed canon fact?'))return;
+  const d=await api('/api/novelforge/canon/review',{
+    universe:S.novel.active,fact_id:factId,decision});
+  toast(d.message||(d.ok?'Fact '+decision+'.':'Review failed.'),d.ok?'ok':'err');
+  if(d.ok)renderCanon();
 }
 function updateNovelCounts(){
   const cnt=list=>q(list).value.split('\n').filter(x=>x.trim()).length;
@@ -520,7 +574,7 @@ async function loadUniverse(name){
   }
   q('nfNotes').value=d.notes||'';
   q('nfStatus').textContent=`Loaded universe: ${d.universe||name}`;
-  updateNovelCounts();toast('Universe loaded.','ok');
+  updateNovelCounts();renderCanon();toast('Universe loaded.','ok');
 }
 async function saveUniverse(){
   const payload={
@@ -1449,6 +1503,27 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <span id="nfCounts"></span>
     </div>
     <div id="nfStatus" class="status">No universe loaded.</div>
+  </div>
+  <div class="card wide"><h3>Living Story Bible — Canon Review</h3>
+    <p class="small">Facts stay proposed until approved. Only approved facts qualify as canon. No manuscript or existing universe lists are changed here.</p>
+    <div id="nfCanonList" class="status">Load or save a universe to review canon.</div>
+    <details><summary>Propose a sourced canon fact</summary>
+      <div class="row">
+        <div><label>Type</label><select id="nfCanonKind"><option value="character">Character</option><option value="location">Location</option><option value="artifact">Artifact</option><option value="event">Event</option><option value="relationship">Relationship</option><option value="thread">Plot thread</option><option value="rule">World rule</option></select></div>
+        <div><label>Subject</label><input id="nfCanonSubject" type="text" placeholder="Character or event name"></div>
+      </div>
+      <label>Proposed fact</label><textarea id="nfCanonClaim" placeholder="State the specific fact in your own words."></textarea>
+      <div class="row">
+        <div><label>Evidence source</label><input id="nfCanonSource" type="text" placeholder="Chapter 3, scene 2"></div>
+        <div><label>Chapter (optional)</label><input id="nfCanonChapter" type="text" placeholder="03"></div>
+      </div>
+      <label>Exact supporting excerpt</label><textarea id="nfCanonQuote" placeholder="Copy a short passage from the original manuscript."></textarea>
+      <div class="row">
+        <div><label>Fictional world time (optional)</label><input id="nfCanonWorldTime" type="text" placeholder="Day 4"></div>
+        <div><label>Narrative order (optional)</label><input id="nfCanonNarrative" type="text" placeholder="Book 1, Chapter 3"></div>
+      </div>
+      <button class="btn primary" onclick="proposeCanonFact()">Submit for review</button>
+    </details>
   </div>
   <div class="card wide"><h3>Story Bible Export</h3>
     <div class="row"><div><label>Readiness note</label><input id="nfReadiness" type="text" placeholder="draft, review, publish-ready…"></div>
