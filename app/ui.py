@@ -1933,6 +1933,7 @@ async function renderFinishing(){
   if(universes.some(u=>u.name===selected))selector.value=selected;
   else if(S.novel.active && universes.some(u=>u.name===S.novel.active))selector.value=S.novel.active;
   await voiceDnaRefresh();
+  await bookPublishInit();
 }
 /* ========================= optional author-owned Voice DNA ========================= */
 async function voiceDnaRefresh(){
@@ -2125,6 +2126,186 @@ async function finishingReviewClassic(){
     if(d.ok){q('finishResult').value=d.text||'';
       q('finishStatus').textContent+=' Original text remains untouched.';}
   }finally{editorialBusy=false;}
+}
+/* ===================== full-book assembly and downloads ===================== */
+const bookPublishState={sourceKey:'',entries:[],snapshot:null};
+function bookPublishInvalidate(){
+  bookPublishState.snapshot=null;
+  q('bookPublishPreviewStatus').textContent='Chapter choices or metadata changed. Preview again before exporting.';
+  q('bookPublishPreviewStatus').className='status';
+  for(const id of ['bookPublishDocx','bookPublishEpub','bookPublishPdf'])
+    q(id).disabled=true;
+}
+async function bookPublishInit(){
+  await loadProjects();
+  const project=q('bookPublishProject');
+  const selected=project.value||S.story.project;
+  project.innerHTML=projectOptions(selected);
+  if(S.projects.some(p=>p.project_id===selected))project.value=selected;
+  await bookPublishSelectProject();
+}
+async function bookPublishSelectProject(){
+  const project=q('bookPublishProject').value;
+  const item=S.projects.find(p=>p.project_id===project);
+  const selector=q('bookPublishBook');
+  const previous=selector.value||S.story.book;
+  selector.replaceChildren();
+  for(const b of (item&&item.books)||[])selector.appendChild(new Option(b.title||b.id,b.id));
+  if((item&&item.books||[]).some(b=>b.id===previous))selector.value=previous;
+  await bookPublishOptions();
+}
+async function bookPublishOptions(){
+  const project=q('bookPublishProject').value;
+  const book=q('bookPublishBook').value;
+  const key=project+'::'+book;
+  bookPublishInvalidate();
+  if(!project||!book){
+    q('bookPublishChoices').replaceChildren();
+    q('bookPublishStatus').textContent='Choose an existing Story Forge project and book.';
+    return;
+  }
+  if(bookPublishState.sourceKey===key&&bookPublishState.entries.length){
+    bookPublishDraw();
+    return;
+  }
+  const r=await api('/api/writer/publishing/book/options?project_id='+
+    encodeURIComponent(project)+'&book_id='+encodeURIComponent(book));
+  if(project!==q('bookPublishProject').value||book!==q('bookPublishBook').value)return;
+  if(!r.ok){
+    bookPublishState.sourceKey='';
+    bookPublishState.entries=[];
+    q('bookPublishChoices').replaceChildren();
+    q('bookPublishStatus').textContent=r.message||'Could not load chapter versions.';
+    return;
+  }
+  bookPublishState.sourceKey=key;
+  bookPublishState.entries=(r.chapters||[]).map(item=>({
+    chapter:item.chapter,filename:item.latest_filename,
+    versions:item.versions,include:true
+  }));
+  q('bookPublishTitle').value=r.book_title||'Untitled Book';
+  q('bookPublishStatus').textContent=r.chapters.length+
+    ' saved chapter(s) found. All are selected by default; adjust selection and reading order before preview.';
+  bookPublishDraw();
+}
+function bookPublishDraw(){
+  const root=q('bookPublishChoices');
+  root.replaceChildren();
+  for(let i=0;i<bookPublishState.entries.length;i++){
+    const chapter=bookPublishState.entries[i];
+    const card=document.createElement('div');card.className='card';
+    const row=document.createElement('div');row.className='row';
+    const checkbox=document.createElement('input');
+    checkbox.type='checkbox';checkbox.checked=chapter.include;
+    checkbox.setAttribute('aria-label','Include chapter '+chapter.chapter);
+    checkbox.addEventListener('change',()=>{chapter.include=checkbox.checked;bookPublishInvalidate();});
+    const name=document.createElement('strong');
+    name.textContent=chapter.chapter;
+    row.appendChild(checkbox);row.appendChild(name);
+    const version=document.createElement('select');
+    version.setAttribute('aria-label','Saved version of '+chapter.chapter);
+    for(const v of chapter.versions)
+      version.appendChild(new Option('Version '+v.version+' · '+v.filename,v.filename));
+    version.value=chapter.filename;
+    version.addEventListener('change',()=>{
+      chapter.filename=version.value;
+      bookPublishInvalidate();
+    });
+    row.appendChild(version);
+    function move(label,where,disabled){
+      const button=document.createElement('button');
+      button.className='btn';button.type='button';
+      button.textContent=label;button.disabled=disabled;
+      button.addEventListener('click',()=>{
+        const temp=bookPublishState.entries[where];
+        bookPublishState.entries[where]=bookPublishState.entries[i];
+        bookPublishState.entries[i]=temp;
+        bookPublishInvalidate();bookPublishDraw();
+      });
+      row.appendChild(button);
+    }
+    move('↑',i-1,i===0);
+    move('↓',i+1,i===bookPublishState.entries.length-1);
+    card.appendChild(row);root.appendChild(card);
+  }
+}
+function bookPublishRequest(){
+  return {
+    project_id:q('bookPublishProject').value,
+    book_id:q('bookPublishBook').value,
+    title:q('bookPublishTitle').value,
+    author:q('bookPublishAuthor').value,
+    chapters:bookPublishState.entries.filter(e=>e.include).map(e=>({
+      chapter:e.chapter,filename:e.filename
+    }))
+  };
+}
+async function bookPublishPreview(){
+  bookPublishInvalidate();
+  const payload=bookPublishRequest();
+  if(!payload.chapters.length){
+    q('bookPublishPreviewStatus').textContent='Select at least one saved chapter.';
+    return;
+  }
+  q('bookPublishPreviewStatus').textContent='Checking the selected saved versions…';
+  const result=await api('/api/writer/publishing/book/preview',payload);
+  if(!result.ok){
+    q('bookPublishPreviewStatus').textContent=result.message||'Book preview failed.';
+    q('bookPublishPreviewStatus').className='status err';
+    return;
+  }
+  bookPublishState.snapshot={
+    payload:JSON.stringify(payload),
+    token:result.confirmation_token,
+    sourceKey:bookPublishState.sourceKey
+  };
+  q('bookPublishPreviewStatus').textContent=
+    'READ-ONLY PREVIEW — '+result.title+
+    '\nChapters: '+result.chapter_count+' · Total words: '+result.total_words+
+    '\n\n'+result.chapters.map((c,i)=>(
+      (i+1)+'. '+c.title+' · v'+c.version+' · '+c.words+' words'+
+      '\n    '+c.excerpt.replace(/\s+/g,' ').slice(0,140)
+    )).join('\n\n')+
+    '\n\nNo source files were changed. Export will verify this exact selection again.';
+  q('bookPublishPreviewStatus').className='status ok';
+  for(const id of ['bookPublishDocx','bookPublishEpub','bookPublishPdf'])
+    q(id).disabled=false;
+}
+async function bookPublishDownload(format){
+  const snapshot=bookPublishState.snapshot;
+  const payload=bookPublishRequest();
+  if(!snapshot || snapshot.sourceKey!==bookPublishState.sourceKey ||
+     snapshot.payload!==JSON.stringify(payload)){
+    bookPublishInvalidate();
+    toast('The book changed. Preview your selected chapters again.','err');
+    return;
+  }
+  const status=q('bookPublishDownloadStatus');
+  status.textContent='Generating the selected '+format.toUpperCase()+' edition in memory…';
+  try{
+    const response=await fetch('/api/writer/publishing/book/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...payload,format,confirmation_token:snapshot.token})
+    });
+    if(!response.ok){
+      let error;try{error=await response.json();}catch(e){}
+      throw new Error(error&&error.message||'Export failed: HTTP '+response.status);
+    }
+    const blob=await response.blob();
+    const match=(response.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    const name=match?match[1]:'Kayock_Book.'+format;
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    status.textContent=name+' downloaded. Only selected saved versions were included; no manuscripts were edited.';
+    status.className='status ok';
+  }catch(error){
+    status.textContent=String(error.message||error);
+    status.className='status err';
+  }
 }
 async function finishingExportPackage(format){
   const text=q('finishText').value;
@@ -2927,16 +3108,41 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div id="finishStatus" class="status">A review uses the model endpoint configured in Settings. No model is started or reserved by this tool.</div>
     <label>Model response — review or suggested revision</label><textarea id="finishResult" class="big" readonly placeholder="Suggestions appear here, separate from your original."></textarea>
   </div>
+  <div class="card wide"><h3>Full-Book Assembly &amp; Publishing</h3>
+    <p class="small">Assemble existing saved Story Forge chapter drafts in exactly the order you choose. Pick which chapters to include and which saved version of each to publish. Preview the assembled manuscript before downloading. Original drafts and version history remain untouched.</p>
+    <div class="row">
+      <div><label>Story Forge project</label><select id="bookPublishProject" onchange="bookPublishSelectProject()"></select></div>
+      <div><label>Book</label><select id="bookPublishBook" onchange="bookPublishOptions()"></select></div>
+      <div class="fixed"><button class="btn" onclick="bookPublishState.sourceKey='';bookPublishOptions()">Refresh saved versions</button></div>
+    </div>
+    <div class="row">
+      <div><label>Book title</label><input id="bookPublishTitle" maxlength="200" oninput="bookPublishInvalidate()"></div>
+      <div><label>Author</label><input id="bookPublishAuthor" maxlength="160" oninput="bookPublishInvalidate()"></div>
+    </div>
+    <div id="bookPublishStatus" class="status">Choose an existing Story Forge project and book.</div>
+    <h4>Saved chapters — selection and reading order</h4>
+    <div id="bookPublishChoices"></div>
+    <button class="btn primary" onclick="bookPublishPreview()">Preview exact chapter selection</button>
+    <pre id="bookPublishPreviewStatus" class="status" style="white-space:pre-wrap;max-height:390px;overflow:auto">Preview required before export. Unsaved work areas are not included.</pre>
+    <div class="row">
+      <button class="btn primary" id="bookPublishDocx" onclick="bookPublishDownload('docx')" disabled>Download book DOCX</button>
+      <button class="btn" id="bookPublishEpub" onclick="bookPublishDownload('epub')" disabled>Download book EPUB</button>
+      <button class="btn" id="bookPublishPdf" onclick="bookPublishDownload('pdf')" disabled>Download book PDF</button>
+    </div>
+    <div id="bookPublishDownloadStatus" class="status">No book export has been requested.</div>
+    <p class="small">DOCX and EPUB preserve Unicode text. The first PDF layout is a searchable, page-numbered basic edition using Windows-1252 fonts; unsupported characters cause a clear error, not character replacement. No files are written to your manuscript folders.</p>
+  </div>
   <div class="card wide"><h3>Craft Suite handoff</h3>
     <p class="small">Download a manuscript file and import it into WordCraft or another editor. There is no assumed Craft Suite import API.</p>
     <button class="btn primary" onclick="finishingExportPackage('docx')">Download DOCX</button>
     <button class="btn" onclick="finishingExportPackage('epub')">Download EPUB 3</button>
+    <button class="btn" onclick="finishingExportPackage('pdf')">Download basic PDF</button>
     <button class="btn" onclick="finishingExport('html')">Download print-style HTML</button>
     <button class="btn" onclick="finishingExport('md')">Download Markdown</button>
     <button class="btn" onclick="finishingExport('txt')">Download plain text</button>
     <button class="btn" onclick="finishingOpenCraft()">Open Craft Suite (configured URL)</button>
     <div id="finishPublishingStatus" class="status">Files are generated on request from the Finishing Desk passage. They are not saved into your manuscript folders.</div>
-    <p class="small">DOCX and EPUB are basic single-document editions; print-to-PDF remains available through downloaded HTML. Advanced pagination, illustrations, tables of contents and full-book assembly remain future milestones.</p>
+    <p class="small">Single-passage DOCX, EPUB and basic PDF exports remain available. For a multi-chapter manuscript, use the Full-Book Assembly workspace above. EPUB includes navigation; DOCX includes an editable contents page; PDF uses conservative WinAnsi fonts with explicit unsupported-character rejection.</p>
   </div>
 </section>
 
