@@ -46,6 +46,16 @@ def render_universe_markdown(data: Dict[str, Any]) -> str:
     )
 
 
+def _read_existing_universe(path: Path) -> Dict[str, Any]:
+    """Refuse to replace damaged existing author data as if it were empty."""
+    try:
+        result = json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError('Existing universe JSON is damaged; refusing to overwrite.') from exc
+    if not isinstance(result, dict):
+        raise ValueError('Existing universe is not a JSON object; refusing to overwrite.')
+    return result
+
 
 class NovelForge:
     def __init__(self, store: Store):
@@ -96,7 +106,10 @@ class NovelForge:
         p = self.novel_path(name)
         if not p or not p.exists():
             return {'ok': False, 'message': 'Universe not found.'}
-        d = jread(p, {})
+        try:
+            d = _read_existing_universe(p)
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         d.update({'ok': True, 'file_name': p.stem, 'path': str(p)})
         return d
 
@@ -107,7 +120,10 @@ class NovelForge:
         p = self.novel_path(name)
         if not p:
             return {'ok': False, 'message': 'Invalid universe name.'}
-        old = jread(p, {}) if p.exists() else {}
+        try:
+            old = _read_existing_universe(p) if p.exists() else {}
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         data = {
             'universe': name,
             'file_name': p.stem,
@@ -145,7 +161,10 @@ class NovelForge:
         p = self.novel_path(name)
         if not p or not p.exists():
             return {'ok': False, 'message': 'Universe not found.'}
-        old = jread(p, {})
+        try:
+            old = _read_existing_universe(p)
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         if not new_title:
             new_title = (old.get('universe') or p.stem) + ' Copy'
         target = self.novel_path(new_title)
@@ -163,8 +182,14 @@ class NovelForge:
         p = self.novel_path(name)
         if not p or not p.exists():
             return {'ok': False, 'message': 'Universe not found.'}
-        old = jread(p, {})
+        try:
+            old = _read_existing_universe(p)
+        except ValueError as exc:
+            return {'ok': False, 'message': str(exc)}
         old_title = old.get('universe') or p.stem
+        new_target = self.novel_path(new_title)
+        if new_target is None or (new_target != p and new_target.exists()):
+            return {'ok': False, 'message': 'Rename target already exists or is invalid.'}
         old['universe'] = new_title
         result = self.save_universe(old)
         if result.get('ok') and result.get('name') != p.stem:
