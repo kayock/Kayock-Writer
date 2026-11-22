@@ -15,6 +15,41 @@ It is a **standalone extraction of the writing tools from [FOXAI](https://github
 > [!IMPORTANT]
 > **LAN security:** v1.1.0 has **no built-in user login or HTTPS**. Anyone who can reach the Writer web port may be able to read or modify writing and settings. Use it only on a trusted LAN, or bind to \`127.0.0.1\` for local-only access. **Do not expose it directly to the public internet.**
 
+## Development branch preview — not yet a release
+
+The [open draft pull request](https://github.com/kayock/Kayock-Writer/pull/1)
+contains ongoing v1.2–v1.5 development work. **The released version
+remains v1.1.0 on `main`**; these development features are not yet
+included in the default `git clone` installation.
+
+The development branch adds author-controlled recovery, streaming
+editorial review, approved Story Bible facts with chronology and
+relationships, safe model presets, a visual Story Forge corkboard,
+independent alternative drafts, and explicit reviewed acceptance
+as new chapter versions. Its Finishing Desk now also offers private,
+opt-in Voice DNA references, developmental/voice audit modes, and
+DOCX/EPUB publishing.
+
+**New publishing workflow under development:** Open
+**Editorial & Craft Handoff → Full-Book Assembly & Publishing**,
+choose a Story Forge project and book, select the exact saved
+version of each chapter, adjust their reading order, and preview.
+Only then can you download a verified **book DOCX, EPUB 3, or basic PDF**.
+No source manuscript file is changed by preview or export.
+
+The basic PDF renderer uses standard PDF Courier fonts and Windows-1252;
+unsupported symbols are rejected rather than replaced. **Use DOCX or
+EPUB for full Unicode**, and expect to perform final page-layout
+checks before distributing a book.
+
+These features run without new mandatory Python dependencies. Automated
+tests use mock data and run on Linux and Windows; they do not replace
+real-model, browser, Word, e-reader or visual PDF acceptance testing.
+The pull request is deliberately left in draft until that validation
+and release approval are complete.
+
+[Development details and API notes](docs/STREAMING_AND_CANON.md)
+
 ## At a glance
 
 | Workspace | What you can do |
