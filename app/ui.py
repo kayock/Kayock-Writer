@@ -612,6 +612,8 @@ async function renderCanon(){
       '<span class="chip">'+esc(f.state)+'</span><p>'+esc(f.claim)+'</p>'+
       (f.chapter?'<div class="small">Chapter: '+esc(f.chapter)+'</div>':'')+
       (f.world_time?'<div class="small">World time: '+esc(f.world_time)+'</div>':'')+
+      ((f.known_by||[]).length?'<div class="small">Explicitly known by: '+esc(f.known_by.join(', '))+
+        (f.learned_time?' · learned '+esc(f.learned_time):' · learning time unspecified')+'</div>':'')+
       evidence+action+'</div>';
   }).join('');
 }
@@ -623,11 +625,14 @@ async function proposeCanonFact(){
     source:q('nfCanonSource').value,quote:q('nfCanonQuote').value,
     chapter:q('nfCanonChapter').value,world_time:q('nfCanonWorldTime').value,
     narrative_order:q('nfCanonNarrative').value,
+    known_by:q('nfCanonKnownBy').value.split(',').map(x=>x.trim()).filter(Boolean),
+    learned_time:q('nfCanonLearnedTime').value,
   };
   const d=await api('/api/novelforge/canon/propose',payload);
   toast(d.message||(d.ok?'Fact proposed for review.':'Proposal rejected.'),d.ok?'ok':'err');
   if(d.ok){
-    ['nfCanonSubject','nfCanonClaim','nfCanonSource','nfCanonQuote'].forEach(id=>q(id).value='');
+    ['nfCanonSubject','nfCanonClaim','nfCanonSource','nfCanonQuote',
+     'nfCanonKnownBy','nfCanonLearnedTime'].forEach(id=>q(id).value='');
     renderCanon();
   }
 }
@@ -667,7 +672,8 @@ async function checkCanonDraft(){
   if(!draft.trim()){target.textContent='Paste a draft excerpt first.';return;}
   target.textContent='Checking explicit continuity tensions…';
   const d=await api('/api/novelforge/canon/continuity',{
-    universe:S.novel.active,text:draft});
+    universe:S.novel.active,text:draft,
+    world_time:q('nfCanonDraftWorldTime').value.trim()});
   if(!d.ok){target.textContent=d.message||'Continuity check failed.';return;}
   const rows=(d.alerts||[]).map(a=>'<div class="card"><strong>Possible tension: '+
     esc(a.subject)+'</strong><p>'+esc(a.draft_excerpt)+'</p>'+
@@ -678,6 +684,43 @@ async function checkCanonDraft(){
     d.reviewed_approved_facts+' approved facts. These are suggestions, not proven errors.'+
     ' Your passage was not changed.</div>'+
     (rows||'<p>No explicit opposite statements found. This does not prove full continuity.</p>');
+}
+async function viewCanonChronology(){
+  const target=q('nfCanonChronology');
+  if(!S.novel.active){target.textContent='Load a universe first.';return;}
+  const result=await api('/api/novelforge/canon/chronology',{universe:S.novel.active});
+  if(!result.ok){target.textContent=result.message||'Chronology unavailable.';return;}
+  const grouped=(result.groups||[]).map(group=>
+    '<div class="card"><strong>'+esc(group.label)+'</strong>'+
+    group.facts.map(f=>'<p>'+esc(f.world_time)+' · '+esc(f.subject)+': '+esc(f.claim)+
+      '<span class="small"> ['+esc(f.narrative_order||'narrative order unknown')+']</span></p>').join('')+
+    '</div>').join('');
+  const unknown=(result.unplaced||[]).map(f=>'<p>'+esc(f.world_time||'Unspecified time')+
+    ' · '+esc(f.subject)+': '+esc(f.claim)+'</p>').join('');
+  target.innerHTML='<div class="status">'+result.total+' approved fact(s); world time is separate from narrative order.</div>'+
+    (grouped||'<p>No sortable approved facts.</p>')+
+    (unknown?'<div class="card"><strong>Unplaced (not ordered)</strong>'+unknown+'</div>':'');
+}
+async function viewCharacterKnowledge(){
+  const target=q('nfCanonKnowledge');
+  if(!S.novel.active){target.textContent='Load a universe first.';return;}
+  const name=q('nfKnowledgeCharacter').value.trim();
+  if(!name){target.textContent='Name the character to inspect.';return;}
+  const result=await api('/api/novelforge/canon/knowledge',{
+    universe:S.novel.active,character:name,at_world_time:q('nfKnowledgeTime').value.trim()
+  });
+  if(!result.ok){target.textContent=result.message||'Could not inspect knowledge.';return;}
+  const row=f=>'<div class="card"><strong>'+esc(f.subject)+'</strong>: '+esc(f.claim)+
+    '<div class="small">Author marked known at: '+esc(f.learned_time||'not specified')+
+    ' · world event: '+esc(f.world_time||'unspecified')+'</div>'+
+    (f.evidence||[]).map(e=>'<div class="small">Source '+esc(e.source)+': '+esc(e.quote)+'</div>').join('')+
+    '</div>';
+  target.innerHTML='<div class="status">'+result.count+' author-assigned known fact(s). '+
+    result.time_uncertain_facts.length+' excluded from time-specific conclusions; '+
+    result.later_known_facts_excluded+' learned later.</div>'+
+    ((result.facts||[]).map(row).join('')||'<p>No explicitly marked knowledge matches.</p>')+
+    (result.time_uncertain_facts.length?'<details><summary>Facts with unknown or incomparable learning time</summary>'+
+      result.time_uncertain_facts.map(row).join('')+'</details>':'');
 }
 function updateNovelCounts(){
   const cnt=list=>q(list).value.split('\n').filter(x=>x.trim()).length;
@@ -1677,6 +1720,11 @@ _HTML = r"""<!doctype html><html lang="en"><head>
         <div><label>Fictional world time (optional)</label><input id="nfCanonWorldTime" type="text" placeholder="Day 4"></div>
         <div><label>Narrative order (optional)</label><input id="nfCanonNarrative" type="text" placeholder="Book 1, Chapter 3"></div>
       </div>
+      <div class="row">
+        <div><label>Which characters explicitly know this fact? (optional, comma-separated)</label><input id="nfCanonKnownBy" type="text" placeholder="Elena, Marcus"></div>
+        <div><label>When they learned it (optional)</label><input id="nfCanonLearnedTime" type="text" placeholder="Day 4 or YYYY-MM-DD"></div>
+      </div>
+      <p class="small">Blank means unspecified, not public knowledge. Learning time is independent of when the world event occurred.</p>
       <button class="btn primary" onclick="proposeCanonFact()">Submit for review</button>
     </details>
   </div>
@@ -1690,8 +1738,26 @@ _HTML = r"""<!doctype html><html lang="en"><head>
     <div id="nfCanonPreview" class="status">Load a universe and search approved canon.</div>
     <label>Draft excerpt for continuity review (unsaved)</label>
     <textarea id="nfCanonDraft" class="big" placeholder="Paste a passage. Compare it against approved facts, without modifying either."></textarea>
-    <button class="btn" onclick="checkCanonDraft()">Check possible continuity tensions</button>
+    <div class="row">
+      <div><label>Draft's fictional-world time (optional)</label>
+        <input id="nfCanonDraftWorldTime" type="text" placeholder="Day 4 or YYYY-MM-DD"></div>
+      <div class="fixed">    <button class="btn" onclick="checkCanonDraft()">Check possible continuity tensions</button></div>
+    </div>
+    <p class="small">With a time set, the checker compares the latest approved state at or before that time and skips incompatible or undated facts instead of inventing chronology.</p>
     <div id="nfCanonWarnings" class="status">A narrow, evidence-linked check for opposing character states or scar details. Time and point of view may resolve apparent differences.</div>
+    <details><summary>World chronology (author-declared)</summary>
+      <button class="btn" onclick="viewCanonChronology()">View approved chronology</button>
+      <div id="nfCanonChronology" class="status">Only Day N and YYYY-MM-DD are sorted, in separate timelines. Narrative order remains independent.</div>
+    </details>
+    <details><summary>Character knowledge (author-declared)</summary>
+      <p class="small">Shows only facts explicitly marked as known to the selected character. If you specify a story time, unknown or incomparable learning times remain uncertain.</p>
+      <div class="row">
+        <div><label>Character name</label><input id="nfKnowledgeCharacter" type="text" placeholder="Elena"></div>
+        <div><label>As of world time (optional)</label><input id="nfKnowledgeTime" type="text" placeholder="Day 7 or YYYY-MM-DD"></div>
+        <div class="fixed"><button class="btn" onclick="viewCharacterKnowledge()">Review knowledge</button></div>
+      </div>
+      <div id="nfCanonKnowledge" class="status">Knowledge is never inferred from characters appearing in the same scene.</div>
+    </details>
   </div>
   <div class="card wide"><h3>Story Bible Export</h3>
     <div class="row"><div><label>Readiness note</label><input id="nfReadiness" type="text" placeholder="draft, review, publish-ready…"></div>
