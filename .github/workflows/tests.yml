@@ -41,6 +41,7 @@ jobs:
       - run: python tests/test_editorial_council.py
       - run: python tests/test_council_model_routing.py
       - run: python tests/test_revision_workspace.py
+      - run: python tests/test_install_staging.py
       - run: python tests/test_publishing.py
       - run: python tests/test_book_publishing.py
       - run: python tests/test_cover_unicode_pdf.py
@@ -68,6 +69,22 @@ jobs:
         run: node tests/browser_release_smoke.cjs
         env:
           PYTHON: python
+      - name: Render synthetic PDF pages with independent reader
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y poppler-utils
+          pdftoppm -f 1 -l 3 -r 110 -png test-results/release-proofs/Fixture_Manuscript.pdf test-results/release-proofs/pdf-page
+          pdftotext -layout test-results/release-proofs/Fixture_Manuscript.pdf test-results/release-proofs/pdf-extracted.txt
+          grep -Fq "The lantern glowed above the empty shore." test-results/release-proofs/pdf-extracted.txt
+          test -s test-results/release-proofs/pdf-page-1.png
+      - name: Upload synthetic book proofs for manual visual acceptance
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kayock-writer-synthetic-publishing-proofs
+          path: test-results/release-proofs/
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload failure screenshot (synthetic fixture only)
         if: failure()
         uses: actions/upload-artifact@v4
