@@ -22,6 +22,7 @@ from .continuity import check as check_continuity
 from .editorial import editorial_review, prepare_editorial
 from urllib.parse import urlsplit
 from .novelforge import NovelForge
+from .recovery import UniverseRecovery
 from .poetry import PoetryForge
 from .provider import Cancellation, Provider
 from .storage import Store
@@ -50,6 +51,7 @@ class App:
         )
         self.weaver = Weaver(self.store, self.provider, default_author=cfg.default_author)
         self.novelforge = NovelForge(self.store)
+        self.recovery = UniverseRecovery(self.store, self.novelforge)
         self.canon = CanonStore(self.store)
         self.storyforge = StoryForge(
             self.store,
@@ -167,6 +169,17 @@ class App:
         if p is None or not p.is_file():
             raise ValueError('Save or load the universe before editing canon.')
         return p.stem
+
+    def recovery_backups(self, name: str) -> Dict[str, Any]:
+        return self.recovery.list_backups(name)
+
+    def recovery_preview(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        return self.recovery.preview(d.get('universe', ''), d.get('backup_id', ''))
+
+    def recovery_restore(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        return self.recovery.restore(d.get('universe', ''),
+                                     d.get('backup_id', ''),
+                                     d.get('confirmation_token', ''))
 
     def canon_list(self, name: str) -> Dict[str, Any]:
         return self.canon.list_facts(self._existing_universe(name))
@@ -404,6 +417,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/novelforge/read':
             self._guard(app.novelforge.read_universe, q1('name'))
             return
+        if path == '/api/novelforge/backups':
+            self._guard(app.recovery_backups, q1('name'))
+            return
         if path == '/api/novelforge/canon':
             self._guard(app.canon_list, q1('name'))
             return
@@ -503,6 +519,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/novelforge/export':
             self._guard(app.novelforge.export_story_bible, d)
+            return
+        if path == '/api/novelforge/backups/preview':
+            self._guard(app.recovery_preview, d)
+            return
+        if path == '/api/novelforge/backups/restore':
+            self._guard(app.recovery_restore, d)
             return
         if path == '/api/novelforge/canon/propose':
             self._guard(app.canon_propose, d)
