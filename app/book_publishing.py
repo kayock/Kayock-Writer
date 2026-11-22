@@ -15,6 +15,7 @@ from typing import Any, Dict
 
 from .publishing import MIMES, _docx, _docx_paragraph, _safe_xml
 from .pdf_publishing import make_pdf
+from .unicode_pdf import make_unicode_pdf
 
 
 def _filename(title: str, fmt: str) -> str:
@@ -226,10 +227,16 @@ def build_book_export(book: Dict[str, Any], fmt: str) -> Dict[str, Any]:
     elif fmt == "epub":
         body = _epub_book(book)
     else:
-        body = make_pdf(
-            book["title"], book["author"], book["chapters"],
-            cover=book.get("cover")
-        )
+        if book.get("pdf_font"):
+            body = make_unicode_pdf(
+                book["title"], book["author"], book["chapters"],
+                book["pdf_font"], cover=book.get("cover")
+            )
+        else:
+            body = make_pdf(
+                book["title"], book["author"], book["chapters"],
+                cover=book.get("cover")
+            )
     return {
         "ok": True, "body": body,
         "content_type": MIMES[fmt],
