@@ -29,6 +29,7 @@ jobs:
       - run: python tests/test_recovery.py
       - run: python tests/test_canon_api.py
       - run: python tests/test_context_engine.py
+      - run: python tests/test_timeline.py
       - run: python tests/test_model_capabilities.py
       - run: python tests/test_streaming.py
       - run: python tests/verify_kayock_writer.py
