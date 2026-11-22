@@ -271,6 +271,7 @@ class RevisionHTTPTests(unittest.TestCase):
             "approved":True
         })
         self.assertEqual(result["canonical_version"],2)
+        self.assertEqual(result["canonical_word_count"],len(CANDIDATE.split()))
         self.assertEqual(self.original.read_bytes(),before)
         self.assertEqual(self.post("/api/writer/revision/load",self.req())["text"],CANDIDATE)
         ui=render_page()
