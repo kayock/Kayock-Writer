@@ -65,10 +65,16 @@ jobs:
         run: npm install --no-save --ignore-scripts playwright@1.65.1
       - name: Install Chromium only
         run: npx playwright install --with-deps chromium
+      - name: Prepare synthetic JPEG for optional publishing UI checks
+        run: python tests/prepare_publishing_ci_assets.py
       - name: Test actual browser buttons against isolated fixture
         run: node tests/browser_release_smoke.cjs
         env:
           PYTHON: python
+      - name: Validate real downloaded EPUB/DOCX and prepare browser proof
+        run: python tests/prepare_epub_reader_proof.py
+      - name: Render EPUB title and chapter XHTML in Chromium
+        run: node tests/render_epub_browser_proof.cjs
       - name: Render synthetic PDF pages with independent reader
         run: |
           sudo apt-get update -qq
@@ -77,6 +83,10 @@ jobs:
           pdftotext -layout test-results/release-proofs/Fixture_Manuscript.pdf test-results/release-proofs/pdf-extracted.txt
           grep -Fq "The lantern glowed above the empty shore." test-results/release-proofs/pdf-extracted.txt
           test -s test-results/release-proofs/pdf-page-1.png
+          pdftotext -layout test-results/ci-private/unicode-cover.pdf test-results/ci-private/unicode-cover-extracted.txt
+          grep -Fq "Ω" test-results/ci-private/unicode-cover-extracted.txt
+          pdftoppm -f 1 -l 1 -r 90 -png test-results/ci-private/unicode-cover.pdf test-results/ci-private/unicode-page
+          test -s test-results/ci-private/unicode-page-1.png
       - name: Upload synthetic book proofs for manual visual acceptance
         if: success()
         uses: actions/upload-artifact@v4
