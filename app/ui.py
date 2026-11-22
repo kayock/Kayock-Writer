@@ -991,18 +991,104 @@ function finishingImport(source){
   if(source==='weaver')q('finishTitle').value=q('weaverTitle').value||'';
   toast('Copied from the work area. Your original draft was not changed.','ok');
 }
+let editorialGeneration=null;
+let editorialBusy=false;
+function editorialPayload(){
+  return {text:q('finishText').value,mode:q('finishMode').value,
+    title:q('finishTitle').value,writing_type:q('finishType').value,
+    direction:q('finishDirection').value};
+}
 async function finishingReview(){
-  const text=q('finishText').value;
-  if(!text.trim()){toast('Paste or import a passage first.','err');return;}
-  q('finishStatus').textContent='Asking your configured writing model…';
-  const d=await api('/api/writer/editorial/review',{
-    text, mode:q('finishMode').value, title:q('finishTitle').value,
-    writing_type:q('finishType').value,direction:q('finishDirection').value
-  });
-  q('finishStatus').textContent=d.message||'No result.';
-  q('finishStatus').className='status '+(d.ok?'ok':'err');
-  if(d.ok){q('finishResult').value=d.text||'';
-    q('finishStatus').textContent+=' Original text remains untouched.';}
+  if(editorialBusy)return;
+  const payload=editorialPayload();
+  if(!payload.text.trim()){toast('Paste or import a passage first.','err');return;}
+  editorialBusy=true;editorialGeneration=null;
+  q('finishStop').disabled=true;
+  q('finishResult').value='';
+  q('finishStatus').textContent='Connecting to the configured model stream…';
+  q('finishStatus').className='status';
+  let terminal=false;
+  try{
+    const response=await fetch('/api/writer/editorial/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!response.ok){
+      let err;try{err=await response.json();}catch(e){}
+      throw new Error(err&&err.message||'HTTP '+response.status);
+    }
+    if(!response.body)throw new Error('This browser does not support streamed responses.');
+    const reader=response.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer='';
+    function handleFrame(frame){
+      let event='';
+      const data=[];
+      for(const line of frame.split(/\r?\n/)){
+        if(line.startsWith('event:'))event=line.slice(6).trim();
+        if(line.startsWith('data:'))data.push(line.slice(5).replace(/^ /,''));
+      }
+      if(!event||!data.length)return;
+      let item;
+      try{item=JSON.parse(data.join('\n'));}catch(e){throw new Error('Invalid stream event from server.');}
+      if(event==='start'){
+        editorialGeneration=item.generation_id;
+        q('finishStop').disabled=false;
+        q('finishStatus').textContent='Generating live review…';
+      }else if(event==='token'){
+        q('finishResult').value+=item.text||'';
+        q('finishResult').scrollTop=q('finishResult').scrollHeight;
+      }else if(event==='done'){
+        terminal=true;
+        q('finishStatus').textContent='Review complete. Original text unchanged.';
+        q('finishStatus').className='status ok';
+      }else if(event==='cancelled'){
+        terminal=true;
+        q('finishStatus').textContent='Stopped. Partial response is unsaved; original text unchanged.';
+        q('finishStatus').className='status';
+      }else if(event==='error'){
+        terminal=true;
+        q('finishStatus').textContent=item.message||'Streaming failed.';
+        q('finishStatus').className='status err';
+      }
+    }
+    while(true){
+      const next=await reader.read();
+      if(next.done)break;
+      buffer+=decoder.decode(next.value,{stream:true});
+      let match;
+      while((match=buffer.match(/\r?\n\r?\n/))){
+        const frame=buffer.slice(0,match.index);
+        buffer=buffer.slice(match.index+match[0].length);
+        handleFrame(frame);
+      }
+    }
+    if(!terminal)throw new Error('Stream closed before completion; partial text is unsaved.');
+  }catch(e){
+    q('finishStatus').textContent=(e&&e.message||String(e))+' Try Classic review if streaming is unsupported.';
+    q('finishStatus').className='status err';
+  }finally{
+    editorialBusy=false;editorialGeneration=null;q('finishStop').disabled=true;
+  }
+}
+async function finishingCancel(){
+  if(!editorialGeneration)return;
+  q('finishStop').disabled=true;
+  q('finishStatus').textContent='Stopping model generation…';
+  const result=await api('/api/generation/'+encodeURIComponent(editorialGeneration)+'/cancel',{});
+  if(!result.ok)q('finishStatus').textContent=result.message||'Could not stop generation.';
+}
+async function finishingReviewClassic(){
+  if(editorialBusy)return;
+  const payload=editorialPayload();
+  if(!payload.text.trim()){toast('Paste or import a passage first.','err');return;}
+  editorialBusy=true;
+  q('finishStatus').textContent='Asking configured model (classic response)…';
+  try{
+    const d=await api('/api/writer/editorial/review',payload);
+    q('finishStatus').textContent=d.message||'No result.';
+    q('finishStatus').className='status '+(d.ok?'ok':'err');
+    if(d.ok){q('finishResult').value=d.text||'';
+      q('finishStatus').textContent+=' Original text remains untouched.';}
+  }finally{editorialBusy=false;}
 }
 function finishingExport(format){
   const text=q('finishText').value;
@@ -1560,7 +1646,9 @@ _HTML = r"""<!doctype html><html lang="en"><head>
       <option value="review">Critique: actionable notes only</option>
       <option value="suggestion">Optional revised passage (never auto-apply)</option></select></div>
       <div><label>Direction / areas of concern</label><input id="finishDirection" type="text" placeholder="Keep my voice; focus on pacing…"></div>
-      <div class="fixed"><button class="btn primary" onclick="finishingReview()">Ask model to review</button></div></div>
+      <div class="fixed"><button class="btn primary" onclick="finishingReview()">Stream review</button>
+      <button class="btn" id="finishStop" onclick="finishingCancel()" disabled>Stop</button>
+      <button class="btn" onclick="finishingReviewClassic()">Classic review</button></div></div>
     <div id="finishStatus" class="status">A review uses the model endpoint configured in Settings. No model is started or reserved by this tool.</div>
     <label>Model response — review or suggested revision</label><textarea id="finishResult" class="big" readonly placeholder="Suggestions appear here, separate from your original."></textarea>
   </div>
